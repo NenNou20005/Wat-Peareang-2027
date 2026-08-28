@@ -30,43 +30,8 @@ export const Route = createFileRoute("/admin/trash")({
   component: AdminTrashPage,
 });
 
-interface TrashedFestival {
-  id: string;
-  name: string;
-  emoji: string;
-  month?: string;
-  trashedAt?: string;
-}
-
-interface TrashedAlbum {
-  id: string;
-  title: string;
-  festivalId: string;
-  year: number;
-  location?: string;
-  photoCount: number;
-  trashedAt?: string;
-}
-
-interface TrashedImage {
-  id: string;
-  title: string;
-  url: string;
-  albumId: string;
-  uploadedBy?: string;
-  trashedAt?: string;
-}
-
-interface TrashData {
-  festivals: TrashedFestival[];
-  albums: TrashedAlbum[];
-  images: TrashedImage[];
-}
-
 function AdminTrashPage() {
   const { isSuperAdmin, hasPermission } = useAuth();
-  const [data, setData] = useState<TrashData>({ festivals: [], albums: [], images: [] });
-  const [loading, setLoading] = useState(true);
   const {
     data = { festivals: [], albums: [], images: [] },
     isLoading: loading,
@@ -79,46 +44,10 @@ function AdminTrashPage() {
   const [tab, setTab] = useState<"all" | "festivals" | "albums" | "images">("all");
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 
-  const fetchTrash = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/admin/trash");
-      const json = await res.json();
-      if (json.success && json.data) {
-        setData(json.data);
-      } else {
-        toast.error(json.error || "មិនអាចទាញយកទិន្នន័យធុងសំរាមបានទេ។");
-      }
-    } catch {
-      toast.error("មានបញ្ហាក្នុងការភ្ជាប់ទៅកាន់ Server។");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchTrash();
-  }, [fetchTrash]);
-
   // Restore Handlers
   const handleRestore = async (type: "festival" | "album" | "image", id: string, name: string) => {
     setActionLoadingId(id);
     try {
-      let endpoint = "";
-      if (type === "festival") endpoint = `/api/admin/festivals/${id}/restore`;
-      else if (type === "album") endpoint = `/api/admin/albums/${id}/restore`;
-      else if (type === "image") endpoint = `/api/admin/images/${id}/restore`;
-
-      const res = await fetch(endpoint, { method: "POST" });
-      const json = await res.json();
-      if (json.success) {
-        toast.success(`បានស្តារ «${name}» ត្រឡប់មកវិញដោយជោគជ័យ!`);
-        fetchTrash();
-      } else {
-        toast.error(json.error || "មិនអាចស្តារឡើងវិញបានទេ។");
-      }
-    } catch {
-      toast.error("មានបញ្ហាក្នុងការស្តារទិន្នន័យ។");
       await restoreMutation.mutateAsync({ type, id });
       toast.success(`បានស្តារ «${name}» ត្រឡប់មកវិញដោយជោគជ័យ!`);
     } catch (err: unknown) {
@@ -150,21 +79,6 @@ function AdminTrashPage() {
 
     setActionLoadingId(id);
     try {
-      let endpoint = "";
-      if (type === "festival") endpoint = `/api/admin/festivals/${id}/permanent`;
-      else if (type === "album") endpoint = `/api/admin/albums/${id}/permanent`;
-      else if (type === "image") endpoint = `/api/admin/images/${id}/permanent`;
-
-      const res = await fetch(endpoint, { method: "DELETE" });
-      const json = await res.json();
-      if (json.success) {
-        toast.success(`បានលុប «${name}» ជាអចិន្ត្រៃយ៍រួចរាល់។`);
-        fetchTrash();
-      } else {
-        toast.error(json.error || "មិនអាចលុបជាអចិន្ត្រៃយ៍បានទេ។");
-      }
-    } catch {
-      toast.error("មានបញ្ហាក្នុងការលុបទិន្នន័យ។");
       await permanentDeleteMutation.mutateAsync({ type, id });
       toast.success(`បានលុប «${name}» ជាអចិន្ត្រៃយ៍រួចរាល់។`);
     } catch (err: unknown) {
@@ -213,7 +127,6 @@ function AdminTrashPage() {
           </div>
 
           <Button
-            onClick={fetchTrash}
             onClick={() => {
               void fetchTrash();
             }}

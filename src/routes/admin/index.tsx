@@ -29,51 +29,9 @@ export const Route = createFileRoute("/admin/")({
   component: AdminDashboardPage,
 });
 
-interface DashboardData {
-  totalFestivals: number;
-  totalYears: number;
-  totalAlbums: number;
-  totalImages: number;
-  totalEditors: number;
-  activeEditors: number;
-  recentActivities: Array<{
-    id: string;
-    userName: string;
-    userRole: string;
-    action: string;
-    resource: string;
-    details?: string;
-    timestamp: string;
-  }>;
-  recentImages: Array<{
-    id: string;
-    title: string;
-    url: string;
-    createdAt: string;
-    uploadedBy: string;
-  }>;
-}
-
 function AdminDashboardPage() {
   const { user, isSuperAdmin, hasPermission } = useAuth();
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
   const { data = null, isLoading: loading } = useAdminDashboard();
-
-  useEffect(() => {
-    fetch("/api/admin/dashboard", {
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-    })
-      .then((r) => r.json())
-      .then((res) => {
-        if (res.success) {
-          setData(res.data);
-        }
-      })
-      .catch((e) => console.error("Error fetching dashboard stats:", e))
-      .finally(() => setLoading(false));
-  }, []);
 
   const stats = [
     {

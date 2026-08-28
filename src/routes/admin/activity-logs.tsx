@@ -27,30 +27,9 @@ interface ActivityLogItem {
 import { useAdminActivityLogs } from "@/hooks/useAdminData";
 
 function AdminActivityLogsPage() {
-  const [logs, setLogs] = useState<ActivityLogItem[]>([]);
-  const [loading, setLoading] = useState(true);
   const { data: logs = [], isLoading: loading, refetch: fetchLogs } = useAdminActivityLogs();
   const [search, setSearch] = useState("");
   const [actionFilter, setActionFilter] = useState<string>("all");
-
-  const fetchLogs = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/admin/activity-logs");
-      const json = await res.json();
-      if (json.success) {
-        setLogs(json.data);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchLogs();
-  }, []);
 
   const filteredLogs = logs.filter((log) => {
     const matchSearch =
@@ -80,7 +59,6 @@ function AdminActivityLogsPage() {
           </div>
 
           <Button
-            onClick={fetchLogs}
             onClick={() => {
               void fetchLogs();
             }}
