@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient: Warm Golden Amber & Temple Aura -->
+    <radialGradient id="bgGrad" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#fff8e7"/>
+      <stop offset="45%" stop-color="#fcedc7"/>
+      <stop offset="85%" stop-color="#edd59e"/>
+      <stop offset="100%" stop-color="#d4af62"/>
+    </radialGradient>
+    
+    <!-- Robe / Saffron Gradient (Traditional Cambodian Buddhist Robe) -->
+    <linearGradient id="robeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="40%" stop-color="#d97706"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </linearGradient>
+
+    <!-- Robe Fold Dark Gradient -->
+    <linearGradient id="robeShadow" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#92400e"/>
+      <stop offset="100%" stop-color="#78350f"/>
+    </linearGradient>
+    
+    <!-- Robe Shoulder Sash (Sanghati) -->
+    <linearGradient id="sashGrad" x1="0%" y1="0%" x2="100%" y2="80%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="50%" stop-color="#d97706"/>
+      <stop offset="100%" stop-color="#92400e"/>
+    </linearGradient>
+
+    <!-- Skin Tone Warm Khmer Golden Tone -->
+    <linearGradient id="skinGrad" x1="30%" y1="10%" x2="70%" y2="90%">
+      <stop offset="0%" stop-color="#ffe4c9"/>
+      <stop offset="60%" stop-color="#f7caa2"/>
+      <stop offset="100%" stop-color="#e0a97c"/>
+    </linearGradient>
+
+    <!-- Head Shaved Hair Shadow -->
+    <linearGradient id="headShade" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#d19c70"/>
+      <stop offset="100%" stop-color="#f7caa2"/>
+    </linearGradient>
+
+    <!-- Soft Golden Halo Aura -->
+    <radialGradient id="haloGrad" cx="50%" cy="42%" r="45%">
+      <stop offset="0%" stop-color="#c9a24a" stop-opacity="0.35"/>
+      <stop offset="70%" stop-color="#d4af62" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#fcedc7" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Background Circle Canvas -->
+  <circle cx="200" cy="200" r="198" fill="url(#bgGrad)"/>
+  
+  <!-- Subtle Spiritual Halo Glow -->
+  <circle cx="200" cy="170" r="140" fill="url(#haloGrad)"/>
+
+  <!-- Decorative Traditional Khmer Lotus Base Pattern behind shoulders -->
+  <g opacity="0.12" fill="#92400e">
+    <circle cx="200" cy="170" r="120" stroke="#b45309" stroke-width="2" fill="none" stroke-dasharray="4,6"/>
+    <circle cx="200" cy="170" r="105" stroke="#b45309" stroke-width="1.5" fill="none"/>
+  </g>
+
+  <!-- Body / Shoulders (Saffron Monastic Robe - Civara) -->
+  <g id="monastic-robe">
+    <!-- Back base of robe -->
+    <path d="M 50 395 C 60 310, 110 260, 200 260 C 290 260, 340 310, 350 395 Z" fill="url(#robeGrad)"/>
+    
+    <!-- Left Shoulder Drape (Traditional Buddhist One-Shoulder / Both Shoulder Covering) -->
+    <!-- Covered Left Shoulder & Upper Torso -->
+    <path d="M 75 395 C 85 305, 130 260, 185 260 C 200 260, 205 310, 195 395 Z" fill="url(#robeGrad)"/>
+    
+    <!-- Robe folds and fabric flows (Saffron / Orange) -->
+    <path d="M 85 350 Q 140 320 200 345 Q 260 370 315 395 L 350 395 C 340 310, 290 260, 200 260 C 130 260, 85 305, 75 395 Z" fill="url(#robeGrad)"/>
+    <path d="M 120 310 Q 170 290 220 320 Q 270 350 330 380" stroke="url(#robeShadow)" stroke-width="3" fill="none" opacity="0.6"/>
+    <path d="M 140 340 Q 185 320 230 350 Q 275 375 310 395" stroke="url(#robeShadow)" stroke-width="2.5" fill="none" opacity="0.5"/>
+    <path d="M 160 370 Q 200 350 240 375" stroke="url(#robeShadow)" stroke-width="2" fill="none" opacity="0.4"/>
+    
+    <!-- Sanghati / Front Fold Across Chest -->
+    <path d="M 135 270 C 150 310, 175 360, 190 395 L 225 395 C 210 350, 180 290, 160 265 Z" fill="url(#sashGrad)" filter="url(#softGlow)" opacity="0.9"/>
+    <path d="M 148 268 Q 175 325 205 395" stroke="#78350f" stroke-width="2" fill="none" opacity="0.6"/>
+  </g>
+
+  <!-- Neck -->
+  <path d="M 172 210 L 172 265 C 172 278, 228 278, 228 265 L 228 210 Z" fill="url(#skinGrad)"/>
+  <!-- Neck shadow under chin -->
+  <ellipse cx="200" cy="222" rx="22" ry="8" fill="#c48a5c" opacity="0.35"/>
+
+  <!-- Head / Face (Calm, Dignified, Respectful Young Monk Profile) -->
+  <g id="head">
+    <!-- Shaved Head (Natural Monk Appearance) -->
+    <ellipse cx="200" cy="155" rx="55" ry="65" fill="url(#skinGrad)"/>
+    <!-- Shaved hair top tone (soft blue-grey/warm scalp tone) -->
+    <path d="M 146 150 C 146 95, 254 95, 254 150 C 254 125, 230 100, 200 100 C 170 100, 146 125, 146 150 Z" fill="url(#headShade)" opacity="0.45"/>
+    
+    <!-- Ears -->
+    <!-- Left Ear -->
+    <path d="M 148 150 C 138 150, 136 175, 148 185 C 146 175, 146 160, 148 150 Z" fill="url(#skinGrad)"/>
+    <path d="M 145 158 Q 140 168 146 176" stroke="#c48a5c" stroke-width="2" fill="none" opacity="0.6"/>
+    <!-- Right Ear -->
+    <path d="M 252 150 C 262 150, 264 175, 252 185 C 254 175, 254 160, 252 150 Z" fill="url(#skinGrad)"/>
+    <path d="M 255 158 Q 260 168 254 176" stroke="#c48a5c" stroke-width="2" fill="none" opacity="0.6"/>
+
+    <!-- Eyebrows (Gentle, Peaceful, Youthful) -->
+    <path d="M 168 142 Q 182 136 193 140" stroke="#78350f" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.8"/>
+    <path d="M 232 142 Q 218 136 207 140" stroke="#78350f" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.8"/>
+
+    <!-- Eyes (Gentle, Serene, Dignified Expression) -->
+    <!-- Left Eye -->
+    <ellipse cx="180" cy="152" rx="8" ry="4.5" fill="#382110"/>
+    <ellipse cx="180" cy="152" rx="3.5" ry="3.5" fill="#1c1008"/>
+    <circle cx="182" cy="150" r="1.5" fill="#ffffff"/>
+    <path d="M 170 151 Q 180 146 190 151" stroke="#451a03" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+    
+    <!-- Right Eye -->
+    <ellipse cx="220" cy="152" rx="8" ry="4.5" fill="#382110"/>
+    <ellipse cx="220" cy="152" rx="3.5" ry="3.5" fill="#1c1008"/>
+    <circle cx="222" cy="150" r="1.5" fill="#ffffff"/>
+    <path d="M 210 151 Q 220 146 230 151" stroke="#451a03" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+
+    <!-- Nose -->
+    <path d="M 200 145 L 198 172 Q 200 176 204 172" stroke="#b45309" stroke-width="1.8" fill="none" stroke-linecap="round" opacity="0.75"/>
+    <path d="M 194 172 Q 200 176 206 172" stroke="#92400e" stroke-width="1.5" fill="none" opacity="0.5"/>
+
+    <!-- Gentle, Serene Smile -->
+    <path d="M 188 190 Q 200 197 212 190" stroke="#9a3412" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+    <path d="M 194 198 Q 200 200 206 198" stroke="#c48a5c" stroke-width="1.5" fill="none" opacity="0.6"/>
+
+    <!-- Cheeks Soft Tone -->
+    <ellipse cx="170" cy="168" rx="10" ry="6" fill="#f87171" opacity="0.12"/>
+    <ellipse cx="230" cy="168" rx="10" ry="6" fill="#f87171" opacity="0.12"/>
+  </g>
+
+  <!-- Golden Circular Trim Ring inside -->
+  <circle cx="200" cy="200" r="195" stroke="#c9a24a" stroke-width="2.5" fill="none" opacity="0.6"/>
+  <circle cx="200" cy="200" r="190" stroke="#fcedc7" stroke-width="1" fill="none" opacity="0.8"/>
+</svg>

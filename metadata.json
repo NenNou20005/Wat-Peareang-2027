@@ -1,0 +1,6 @@
+{
+  "name": "Wat Peareang - Khmer Festival Photo Archive",
+  "description": "បណ្ណសាររូបភាពបុណ្យខ្មែរ រៀបចំតាមឆ្នាំ និងតាមព្រឹត្តិការណ៍ — Khmer festival photo archive and memory preservation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

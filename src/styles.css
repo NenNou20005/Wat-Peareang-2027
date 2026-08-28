@@ -1,0 +1,217 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Khmer Festival Archive design system.
+ * Cream paper base, deep temple green, and Angkor gold accents.
+ * All colors use oklch. Never hardcode colors in components.
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-gold: var(--gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-gold-foreground: var(--gold-foreground);
+  --color-temple: var(--temple);
+  --color-temple-deep: var(--temple-deep);
+  --color-temple-foreground: var(--temple-foreground);
+  --color-cream: var(--cream);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --font-display: "Moul", "Noto Serif Khmer", serif;
+  --font-sans: "Kantumruy Pro", "Noto Sans Khmer", system-ui, sans-serif;
+  --shadow-card: 0 1px 2px oklch(0.35 0.05 80 / 0.06), 0 12px 28px -12px oklch(0.35 0.05 80 / 0.22);
+  --shadow-card-hover:
+    0 2px 4px oklch(0.35 0.05 80 / 0.08), 0 24px 44px -16px oklch(0.35 0.05 80 / 0.3);
+  --shadow-soft: 0 1px 3px oklch(0.35 0.05 80 / 0.06), 0 8px 20px -14px oklch(0.35 0.05 80 / 0.2);
+}
+
+:root {
+  --radius: 1rem;
+  --background: oklch(0.982 0.008 88);
+  --foreground: oklch(0.26 0.028 75);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.26 0.028 75);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.26 0.028 75);
+  --primary: oklch(0.36 0.062 158);
+  --primary-foreground: oklch(0.985 0.01 90);
+  --secondary: oklch(0.955 0.018 88);
+  --secondary-foreground: oklch(0.32 0.035 80);
+  --muted: oklch(0.955 0.016 88);
+  --muted-foreground: oklch(0.52 0.03 78);
+  --accent: oklch(0.72 0.13 78);
+  --accent-foreground: oklch(0.24 0.03 75);
+  --destructive: oklch(0.55 0.19 25);
+  --destructive-foreground: oklch(0.985 0.01 90);
+  --border: oklch(0.9 0.018 85);
+  --input: oklch(0.9 0.018 85);
+  --ring: oklch(0.72 0.13 78);
+  --gold: oklch(0.74 0.132 76);
+  --gold-soft: oklch(0.93 0.05 84);
+  --gold-foreground: oklch(0.24 0.03 75);
+  --temple: oklch(0.33 0.055 158);
+  --temple-deep: oklch(0.24 0.045 158);
+  --temple-foreground: oklch(0.97 0.015 90);
+  --cream: oklch(0.968 0.014 88);
+  --sidebar: oklch(0.972 0.012 88);
+  --sidebar-foreground: oklch(0.26 0.028 75);
+  --sidebar-primary: oklch(0.36 0.062 158);
+  --sidebar-primary-foreground: oklch(0.985 0.01 90);
+  --sidebar-accent: oklch(0.93 0.05 84);
+  --sidebar-accent-foreground: oklch(0.26 0.028 75);
+  --sidebar-border: oklch(0.9 0.018 85);
+  --sidebar-ring: oklch(0.72 0.13 78);
+
+  /* Festival accent identities (soft, premium) */
+  --fest-newyear: oklch(0.62 0.14 62);
+  --fest-visak: oklch(0.6 0.12 82);
+  --fest-meak: oklch(0.64 0.13 72);
+  --fest-cholvossa: oklch(0.48 0.1 152);
+  --fest-chenhvossa: oklch(0.48 0.12 310);
+  --fest-kathin: oklch(0.5 0.09 185);
+  --fest-pchumben: oklch(0.42 0.12 295);
+  --fest-omtouk: oklch(0.52 0.12 245);
+}
+
+.dark {
+  --background: oklch(0.19 0.02 80);
+  --foreground: oklch(0.96 0.012 88);
+  --card: oklch(0.24 0.024 80);
+  --card-foreground: oklch(0.96 0.012 88);
+  --popover: oklch(0.24 0.024 80);
+  --popover-foreground: oklch(0.96 0.012 88);
+  --primary: oklch(0.7 0.1 158);
+  --primary-foreground: oklch(0.18 0.02 80);
+  --secondary: oklch(0.28 0.026 80);
+  --secondary-foreground: oklch(0.96 0.012 88);
+  --muted: oklch(0.28 0.026 80);
+  --muted-foreground: oklch(0.72 0.024 82);
+  --accent: oklch(0.74 0.132 76);
+  --accent-foreground: oklch(0.2 0.02 80);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --cream: oklch(0.24 0.024 80);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    line-height: 1.5;
+  }
+}
+
+@utility khmer-divider {
+  background-image: linear-gradient(
+    to right,
+    transparent,
+    var(--gold) 20%,
+    var(--gold) 80%,
+    transparent
+  );
+  height: 1px;
+}
+
+@utility hero-scrim {
+  background-image: linear-gradient(
+    100deg,
+    oklch(0.18 0.03 80 / 0.92) 0%,
+    oklch(0.18 0.03 80 / 0.72) 38%,
+    oklch(0.18 0.03 80 / 0.18) 70%,
+    oklch(0.18 0.03 80 / 0.05) 100%
+  );
+}
+
+@utility card-scrim {
+  background-image: linear-gradient(
+    to top,
+    oklch(0.2 0.03 80 / 0.92) 0%,
+    oklch(0.2 0.03 80 / 0.55) 45%,
+    oklch(0.2 0.03 80 / 0) 100%
+  );
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@keyframes softGlowPulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px oklch(1 0 0 / 70%),
+      0 0 0 3px oklch(0.74 0.132 76 / 50%),
+      0 8px 24px -4px oklch(0.74 0.132 76 / 35%),
+      0 0 20px 2px oklch(0.74 0.132 76 / 25%);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px oklch(1 0 0 / 90%),
+      0 0 0 4px oklch(0.74 0.132 76 / 75%),
+      0 12px 32px -4px oklch(0.74 0.132 76 / 50%),
+      0 0 28px 6px oklch(0.74 0.132 76 / 40%);
+  }
+}
+
+.developer-glow-pulse {
+  animation: softGlowPulse 3.5s ease-in-out infinite;
+}
+
+.developer-glow-pulse:hover {
+  box-shadow:
+    0 0 0 1px oklch(1 0 0 / 95%),
+    0 0 0 4px oklch(0.74 0.132 76 / 85%),
+    0 14px 36px -4px oklch(0.74 0.132 76 / 60%),
+    0 0 32px 8px oklch(0.74 0.132 76 / 45%);
+}
