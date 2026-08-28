@@ -32,6 +32,7 @@ import {
   useTrashImage,
   type AdminImage,
 } from "@/hooks/useAdminData";
+import { resolveImageUrl } from "@/lib/asset-resolver";
 
 export const Route = createFileRoute("/admin/images")({
   head: () => ({
@@ -351,10 +352,13 @@ function AdminImagesPage() {
               >
                 <div className="aspect-square w-full overflow-hidden bg-secondary">
                   <img
-                    src={img.url}
+                    src={resolveImageUrl(img.thumbnailUrl || img.url)}
                     alt={img.title}
                     className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                     loading="lazy"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = resolveImageUrl(null);
+                    }}
                   />
                 </div>
 
@@ -377,7 +381,13 @@ function AdminImagesPage() {
                         setEditingImage(img);
                         setEditTitle(img.title);
                         setEditPhotographer(img.photographer || "វត្តពារាំង");
-                        setEditTags(img.tags ? img.tags.join(", ") : "");
+                        setEditTags(
+                          img.tags
+                            ? Array.isArray(img.tags)
+                              ? img.tags.join(", ")
+                              : String(img.tags)
+                            : "",
+                        );
                       }}
                       className="grid h-7 w-7 place-items-center rounded-full bg-background/90 text-foreground backdrop-blur hover:bg-gold hover:text-primary-foreground shadow-sm transition-colors"
                       title="កែសម្រួលព័ត៌មាន"
@@ -588,9 +598,12 @@ function AdminImagesPage() {
               {editingImage && (
                 <div className="flex items-center gap-3 rounded-2xl border border-border/60 bg-secondary/30 p-3">
                   <img
-                    src={editingImage.url}
+                    src={resolveImageUrl(editingImage.thumbnailUrl || editingImage.url)}
                     alt={editingImage.title}
                     className="h-14 w-14 rounded-xl object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = resolveImageUrl(null);
+                    }}
                   />
                   <div className="min-w-0 flex-1 text-xs">
                     <p className="font-mono text-[10px] text-muted-foreground truncate">

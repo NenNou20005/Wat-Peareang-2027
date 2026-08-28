@@ -22,6 +22,7 @@ import {
   useRestoreTrashItem,
   usePermanentDeleteTrashItem,
 } from "@/hooks/useAdminData";
+import { resolveImageUrl } from "@/lib/asset-resolver";
 
 export const Route = createFileRoute("/admin/trash")({
   head: () => ({
@@ -364,9 +365,13 @@ function AdminTrashPage() {
                     >
                       <div className="aspect-square w-full overflow-hidden bg-secondary">
                         <img
-                          src={img.url}
+                          src={resolveImageUrl(img.url)}
                           alt={img.title}
                           className="h-full w-full object-cover opacity-75 grayscale transition-all group-hover:grayscale-0 group-hover:opacity-100"
+                          loading="lazy"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = resolveImageUrl(null);
+                          }}
                         />
                       </div>
 

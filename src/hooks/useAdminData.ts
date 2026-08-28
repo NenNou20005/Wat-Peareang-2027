@@ -44,6 +44,8 @@ export const adminKeys = {
   activityLogs: () => ["admin", "activity-logs"] as const,
 };
 
+import { resolveImageUrl } from "@/lib/asset-resolver";
+
 // --- DATA TYPES ---
 export interface AdminFestival {
   id: string;
@@ -80,13 +82,17 @@ export interface AdminAlbum {
 export interface AdminImage {
   id: string;
   albumId: string;
+  albumTitle?: string | undefined;
+  festivalName?: string | undefined;
+  year?: number | undefined;
   title: string;
+  description?: string | undefined;
   url: string;
   thumbnailUrl?: string | undefined;
   size?: number | undefined;
   mimeType?: string | undefined;
   photographer?: string | undefined;
-  tags?: string[] | undefined;
+  tags?: string | string[] | undefined;
   uploadedBy?: string | undefined;
   createdAt: string;
   status?: string | undefined;
@@ -286,9 +292,16 @@ export function useAdminImages(params?: {
       const res = await fetch(`/api/admin/images${qs}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
-      if (!json.success) throw new Error(json.error || "Failed to fetch admin images");
+      const rawImages: AdminImage[] = json.images || [];
+      const mappedImages = rawImages.map((img) => ({
+        ...img,
+        url: resolveImageUrl(img.url),
+        thumbnailUrl: img.thumbnailUrl
+          ? resolveImageUrl(img.thumbnailUrl)
+          : resolveImageUrl(img.url),
+      }));
       return {
-        images: json.images || [],
+        images: mappedImages,
         total: json.total || 0,
         totalPages: json.totalPages || 1,
         page: json.page || 1,
@@ -834,4 +847,3 @@ export function usePermanentDeleteTrashItem() {
     },
   });
 }
-
