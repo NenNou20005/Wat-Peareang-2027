@@ -3,16 +3,17 @@
   "private": true,
   "sideEffects": false,
   "type": "module",
-  "scripts": {
-    "dev": "vite dev",
-    "build": "vite build",
-    "build:dev": "vite build --mode development",
-    "preview": "vite preview",
-    "lint": "eslint .",
-    "format": "prettier --write .",
-    "db:migrate": "node --import tsx src/db/run-migration.ts",
-    "db:push": "drizzle-kit push"
-  },
+"scripts": {
+  "dev": "vite dev",
+  "build": "vite build",
+  "start": "node .output/server/index.mjs",
+  "build:dev": "vite build --mode development",
+  "preview": "vite preview",
+  "lint": "eslint .",
+  "format": "prettier --write .",
+  "db:migrate": "node --import tsx src/db/run-migration.ts",
+  "db:push": "drizzle-kit push"
+},
   "overrides": {
     "rolldown": "1.2.1"
   },
