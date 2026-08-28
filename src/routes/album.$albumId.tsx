@@ -1,19 +1,35 @@
 import { createFileRoute, notFound, Link, useParams } from "@tanstack/react-router";
+import { createServerFn } from "@tanstack/react-start";
 import { useState, useEffect } from "react";
 import { Share2, Download, Images, ArrowLeft } from "lucide-react";
 import { Lightbox } from "@/components/site/Lightbox";
-import { toKhmerNumber } from "@/data/archive";
+import { toKhmerNumber, type Album } from "@/data/archive";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { fetchAlbumById } from "@/lib/api-archive";
 import { useAlbum, useAlbumPhotos } from "@/hooks/useArchiveData";
 import { trackAlbumView } from "@/lib/analytics";
 import { LikeButton } from "@/components/site/LikeButton";
 import { FavoriteButton } from "@/components/site/FavoriteButton";
+import { getPostgresAlbumById } from "@/server/queries";
+import { resolveImageUrl } from "@/lib/asset-resolver";
+
+const getAlbumServerFn = createServerFn({ method: "GET" })
+  .validator((albumId: string) => albumId)
+  .handler(async ({ data: albumId }): Promise<Album | null> => {
+    const rawAlbum = await getPostgresAlbumById(albumId);
+    if (!rawAlbum) return null;
+    return {
+      ...rawAlbum,
+      festival: {
+        ...rawAlbum.festival,
+        cover: resolveImageUrl(rawAlbum.festival?.cover, rawAlbum.festivalId),
+      },
+    };
+  });
 
 export const Route = createFileRoute("/album/$albumId")({
   loader: async ({ params }) => {
-    const album = await fetchAlbumById(params.albumId);
+    const album = await getAlbumServerFn({ data: params.albumId });
     if (!album) throw notFound();
     return { album };
   },
