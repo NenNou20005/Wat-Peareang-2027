@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+import { useAdminDashboard } from "@/hooks/useAdminData";
+
 export const Route = createFileRoute("/admin/")({
   head: () => ({
     meta: [{ title: "ផ្ទាំងគ្រប់គ្រង — Wat Peareang Admin" }],
@@ -56,6 +58,7 @@ function AdminDashboardPage() {
   const { user, isSuperAdmin, hasPermission } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const { data = null, isLoading: loading } = useAdminDashboard();
 
   useEffect(() => {
     fetch("/api/admin/dashboard", {

@@ -17,6 +17,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 
+import {
+  useAdminTrash,
+  useRestoreTrashItem,
+  usePermanentDeleteTrashItem,
+} from "@/hooks/useAdminData";
+
 export const Route = createFileRoute("/admin/trash")({
   head: () => ({
     meta: [{ title: "ធុងសំរាម (Trash & Recovery) — Wat Peareang Admin" }],
@@ -61,6 +67,14 @@ function AdminTrashPage() {
   const { isSuperAdmin, hasPermission } = useAuth();
   const [data, setData] = useState<TrashData>({ festivals: [], albums: [], images: [] });
   const [loading, setLoading] = useState(true);
+  const {
+    data = { festivals: [], albums: [], images: [] },
+    isLoading: loading,
+    refetch: fetchTrash,
+  } = useAdminTrash();
+  const restoreMutation = useRestoreTrashItem();
+  const permanentDeleteMutation = usePermanentDeleteTrashItem();
+
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"all" | "festivals" | "albums" | "images">("all");
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
@@ -105,6 +119,11 @@ function AdminTrashPage() {
       }
     } catch {
       toast.error("មានបញ្ហាក្នុងការស្តារទិន្នន័យ។");
+      await restoreMutation.mutateAsync({ type, id });
+      toast.success(`បានស្តារ «${name}» ត្រឡប់មកវិញដោយជោគជ័យ!`);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : "មិនអាចស្តារឡើងវិញបានទេ។";
+      toast.error(errorMsg);
     } finally {
       setActionLoadingId(null);
     }
@@ -146,6 +165,11 @@ function AdminTrashPage() {
       }
     } catch {
       toast.error("មានបញ្ហាក្នុងការលុបទិន្នន័យ។");
+      await permanentDeleteMutation.mutateAsync({ type, id });
+      toast.success(`បានលុប «${name}» ជាអចិន្ត្រៃយ៍រួចរាល់។`);
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : "មិនអាចលុបជាអចិន្ត្រៃយ៍បានទេ។";
+      toast.error(errorMsg);
     } finally {
       setActionLoadingId(null);
     }
@@ -190,6 +214,9 @@ function AdminTrashPage() {
 
           <Button
             onClick={fetchTrash}
+            onClick={() => {
+              void fetchTrash();
+            }}
             variant="outline"
             size="sm"
             className="rounded-full gap-1.5 text-xs h-9"

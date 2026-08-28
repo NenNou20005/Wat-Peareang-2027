@@ -24,9 +24,12 @@ interface ActivityLogItem {
   timestamp: string;
 }
 
+import { useAdminActivityLogs } from "@/hooks/useAdminData";
+
 function AdminActivityLogsPage() {
   const [logs, setLogs] = useState<ActivityLogItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const { data: logs = [], isLoading: loading, refetch: fetchLogs } = useAdminActivityLogs();
   const [search, setSearch] = useState("");
   const [actionFilter, setActionFilter] = useState<string>("all");
 
@@ -78,6 +81,9 @@ function AdminActivityLogsPage() {
 
           <Button
             onClick={fetchLogs}
+            onClick={() => {
+              void fetchLogs();
+            }}
             variant="outline"
             size="sm"
             className="rounded-full gap-1.5 text-xs h-9"
