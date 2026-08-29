@@ -373,6 +373,7 @@ export function useCreateFestival() {
     }) => {
       const res = await fetch("/api/admin/festivals", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -410,6 +411,7 @@ export function useUpdateFestival() {
     }) => {
       const res = await fetch(`/api/admin/festivals/${encodeURIComponent(id)}`, {
         method: "PUT",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -436,6 +438,7 @@ export function useDeleteFestival() {
     mutationFn: async (id: string) => {
       const res = await fetch(`/api/admin/festivals/${encodeURIComponent(id)}`, {
         method: "DELETE",
+        credentials: "include",
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed to delete festival");

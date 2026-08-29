@@ -13,6 +13,7 @@ import { PREDEFINED_EXTRA_FESTIVALS, saveCustomFestival, type Festival } from "@
 import { Plus, Check, Sparkles, PartyPopper } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useCreateFestival } from "@/hooks/useAdminData";
 
 const EMOJI_PRESETS = [
   "🛕",
@@ -81,20 +82,35 @@ export function AddFestivalModal({
   const [month, setMonth] = useState("ពេញមួយឆ្នាំ");
   const [accent, setAccent] = useState(ACCENT_COLORS[0]!.value);
 
+  const createFestivalMutation = useCreateFestival();
+
   const availablePresets = PREDEFINED_EXTRA_FESTIVALS.filter(
     (f) => !existingFestivalIds.includes(f.id),
   );
 
-  function handleAddPreset(f: Festival) {
-    saveCustomFestival(f);
-    onFestivalAdded?.(f);
-    toast.success(`បានបន្ថែម «${f.name}» ដោយជោគជ័យ!`, {
-      description: `ពិធីបុណ្យត្រូវបានដាក់បញ្ចូលក្នុងតម្រងបណ្ណសារ។`,
-    });
-    onOpenChange(false);
+  async function handleAddPreset(f: Festival) {
+    try {
+      await createFestivalMutation.mutateAsync({
+        id: f.id,
+        name: f.name,
+        emoji: f.emoji,
+        accent: f.accent,
+        month: f.month,
+        coverUrl: f.cover,
+      });
+      saveCustomFestival(f);
+      onFestivalAdded?.(f);
+      toast.success(`បានបន្ថែម «${f.name}» ដោយជោគជ័យ!`, {
+        description: `ពិធីបុណ្យត្រូវបានដាក់បញ្ចូលក្នុងតម្រងបណ្ណសារ។`,
+      });
+      onOpenChange(false);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការបន្ថែមពិធីបុណ្យ។";
+      toast.error(msg);
+    }
   }
 
-  function handleCreateCustom(e: React.FormEvent) {
+  async function handleCreateCustom(e: React.FormEvent) {
     e.preventDefault();
     const cleanName = name.trim();
     if (!cleanName) {
@@ -107,16 +123,29 @@ export function AddFestivalModal({
       id: customId,
       name: cleanName.startsWith("បុណ្យ") ? cleanName : `បុណ្យ${cleanName}`,
       emoji,
-      cover: PREDEFINED_EXTRA_FESTIVALS[0]!.cover,
+      cover: PREDEFINED_EXTRA_FESTIVALS[0]?.cover || "/assets/fest-custom.jpg",
       accent,
       month,
     };
 
-    saveCustomFestival(newFestival);
-    onFestivalAdded?.(newFestival);
-    toast.success(`បានបន្ថែម «${newFestival.name}» ដោយជោគជ័យ!`);
-    setName("");
-    onOpenChange(false);
+    try {
+      await createFestivalMutation.mutateAsync({
+        id: newFestival.id,
+        name: newFestival.name,
+        emoji: newFestival.emoji,
+        accent: newFestival.accent,
+        month: newFestival.month,
+        coverUrl: newFestival.cover,
+      });
+      saveCustomFestival(newFestival);
+      onFestivalAdded?.(newFestival);
+      toast.success(`បានបន្ថែម «${newFestival.name}» ដោយជោគជ័យ!`);
+      setName("");
+      onOpenChange(false);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការបង្កើតពិធីបុណ្យ។";
+      toast.error(msg);
+    }
   }
 
   return (
@@ -196,8 +225,9 @@ export function AddFestivalModal({
                     <button
                       key={f.id}
                       type="button"
+                      disabled={createFestivalMutation.isPending}
                       onClick={() => handleAddPreset(f)}
-                      className="group flex items-center justify-between rounded-2xl border border-border bg-card p-3 text-left transition-all hover:border-gold hover:bg-gold-soft/30 hover:shadow-soft"
+                      className="group flex items-center justify-between rounded-2xl border border-border bg-card p-3 text-left transition-all hover:border-gold hover:bg-gold-soft/30 hover:shadow-soft disabled:opacity-50"
                     >
                       <div className="flex items-center gap-3">
                         <span
@@ -329,9 +359,11 @@ export function AddFestivalModal({
                 </Button>
                 <Button
                   type="submit"
+                  disabled={createFestivalMutation.isPending}
                   className="rounded-full bg-gold text-gold-foreground hover:bg-gold/90"
                 >
-                  <Plus className="mr-1 h-4 w-4" /> បន្ថែមពិធីបុណ្យនេះ
+                  <Plus className="mr-1 h-4 w-4" />
+                  {createFestivalMutation.isPending ? "កំពុងបន្ថែម..." : "បន្ថែមពិធីបុណ្យនេះ"}
                 </Button>
               </div>
             </form>
