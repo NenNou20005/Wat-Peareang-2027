@@ -21,18 +21,40 @@ export function getPoolConfig(): PoolConfig | null {
   if (databaseUrl && databaseUrl.trim().length > 0) {
     // Only accept postgresql / postgres protocols
     if (databaseUrl.startsWith("postgresql://") || databaseUrl.startsWith("postgres://")) {
+      const trimmedUrl = databaseUrl.trim();
+      const isLocalhost =
+        trimmedUrl.includes("@localhost") ||
+        trimmedUrl.includes("@127.0.0.1") ||
+        trimmedUrl.includes("localhost:") ||
+        trimmedUrl.includes("127.0.0.1:");
+      const isExplicitSslDisable =
+        trimmedUrl.includes("sslmode=disable") || process.env["PGSSLMODE"] === "disable";
+
+      const shouldEnableSsl =
+        !isExplicitSslDisable &&
+        (trimmedUrl.includes("sslmode=require") ||
+          trimmedUrl.includes("ssl=true") ||
+          trimmedUrl.includes("sslmode=no-verify") ||
+          process.env["NODE_ENV"] === "production" ||
+          !isLocalhost);
+
       return {
-        connectionString: databaseUrl.trim(),
+        connectionString: trimmedUrl,
         max: 10,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 10000,
-        ssl: databaseUrl.includes("sslmode=require") ? { rejectUnauthorized: false } : undefined,
+        ssl: shouldEnableSsl ? { rejectUnauthorized: false } : undefined,
       };
     }
   }
 
   // Check SQL_* variables
   if (process.env["SQL_HOST"] && process.env["SQL_DB_NAME"]) {
+    const isLocalhost =
+      process.env["SQL_HOST"] === "localhost" || process.env["SQL_HOST"] === "127.0.0.1";
+    const isExplicitSslDisable = process.env["PGSSLMODE"] === "disable";
+    const shouldEnableSsl =
+      !isExplicitSslDisable && (process.env["NODE_ENV"] === "production" || !isLocalhost);
     return {
       host: process.env["SQL_HOST"],
       user: process.env["SQL_USER"] || "postgres",
@@ -42,11 +64,17 @@ export function getPoolConfig(): PoolConfig | null {
       max: 10,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
+      ssl: shouldEnableSsl ? { rejectUnauthorized: false } : undefined,
     };
   }
 
   // Check standard PG* variables
   if (process.env["PGHOST"] && process.env["PGDATABASE"]) {
+    const isLocalhost =
+      process.env["PGHOST"] === "localhost" || process.env["PGHOST"] === "127.0.0.1";
+    const isExplicitSslDisable = process.env["PGSSLMODE"] === "disable";
+    const shouldEnableSsl =
+      !isExplicitSslDisable && (process.env["NODE_ENV"] === "production" || !isLocalhost);
     return {
       host: process.env["PGHOST"],
       user: process.env["PGUSER"] || "postgres",
@@ -56,6 +84,7 @@ export function getPoolConfig(): PoolConfig | null {
       max: 10,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
+      ssl: shouldEnableSsl ? { rejectUnauthorized: false } : undefined,
     };
   }
 
