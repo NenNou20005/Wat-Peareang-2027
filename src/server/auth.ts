@@ -1,5 +1,8 @@
 import { db, verifyPassword } from "./db";
-import type { User, Permission } from "../types/auth";
+import { getDrizzleDb } from "../db/index";
+import * as schema from "../db/schema";
+import { eq, and, gte } from "drizzle-orm";
+import type { User, Permission, UserRole } from "../types/auth";
 
 export interface AuthContext {
   user: User | null;
@@ -80,25 +83,60 @@ export function getSessionTokenFromRequest(request: Request): string | null {
   return null;
 }
 
-export function authenticateRequest(request: Request): AuthContext {
+export async function authenticateRequest(request: Request): Promise<AuthContext> {
   const token = getSessionTokenFromRequest(request);
   if (!token) {
     return { user: null, isAuthenticated: false, hadSessionToken: false };
   }
 
-  const session = db.getSession(token);
+  let session = db.getSession(token);
+
+  // If not found in memory cache, query authoritative PostgreSQL sessions table
+  if (!session) {
+    const drizzle = getDrizzleDb();
+    if (drizzle) {
+      try {
+        const rows = await drizzle
+          .select()
+          .from(schema.sessions)
+          .where(and(eq(schema.sessions.token, token), gte(schema.sessions.expiresAt, new Date())))
+          .limit(1);
+
+        const s = rows[0];
+        if (s && s.expiresAt) {
+          session = {
+            token: s.token,
+            userId: s.userId,
+            expiresAt: new Date(s.expiresAt).getTime(),
+            createdAt: s.createdAt ? new Date(s.createdAt).toISOString() : new Date().toISOString(),
+            ...(s.userAgent ? { userAgent: s.userAgent } : {}),
+            ...(s.ip ? { ip: s.ip } : {}),
+          };
+          // Cache in memory
+          db.cacheSession(session);
+        }
+      } catch (err) {
+        console.warn("[Auth Session Lookup Error]:", err);
+      }
+    }
+  }
+
   if (!session) {
     // Session token provided but does not exist in DB (e.g. invalidated by a newer login)
     return { user: null, isAuthenticated: false, hadSessionToken: true };
   }
 
-  const user = db.findUserById(session.userId);
+  let user = db.findUserById(session.userId);
+  if (!user) {
+    user = await db.findUserByIdAsync(session.userId);
+  }
+
   if (!user || user.status === "disabled") {
     // If account is disabled or deleted, reject session
     return { user: null, isAuthenticated: false, hadSessionToken: true };
   }
 
-  // Super Admin: Enforce Single Active Session on every request
+  // Super Admin: Enforce Single Active Session on request
   if (user.role === "super_admin") {
     if (!db.isSuperAdminSessionActive(user.id, token)) {
       db.deleteSession(token);
@@ -123,11 +161,11 @@ export function hasPermission(user: User | null, permission: Permission): boolea
   return user.permissions.includes(permission);
 }
 
-export function requireAuth(
+export async function requireAuth(
   request: Request,
   requiredPermission?: Permission,
-): { user: User } | Response {
-  const auth = authenticateRequest(request);
+): Promise<{ user: User } | Response> {
+  const auth = await authenticateRequest(request);
   const { user, isAuthenticated, hadSessionToken } = auth;
 
   if (!isAuthenticated || !user) {
@@ -177,8 +215,8 @@ export function requireAuth(
   return { user };
 }
 
-export function requireSuperAdmin(request: Request): { user: User } | Response {
-  const auth = authenticateRequest(request);
+export async function requireSuperAdmin(request: Request): Promise<{ user: User } | Response> {
+  const auth = await authenticateRequest(request);
   const { user, isAuthenticated, hadSessionToken } = auth;
 
   if (!isAuthenticated || !user) {
@@ -229,14 +267,16 @@ export function requireSuperAdmin(request: Request): { user: User } | Response {
 }
 
 export function createSessionCookie(token: string): string {
-  // Secure HTTP-Only cookie, 7 days duration.
-  // Use SameSite=None; Secure; Partitioned to allow cookies in both standalone browsers and embedded preview iframes on HTTPS.
-  const maxAge = 7 * 24 * 60 * 60;
+  const maxAge = 7 * 24 * 60 * 60; // 7 days
+  const isProduction = process.env["NODE_ENV"] === "production";
+  const secureFlag = isProduction ? "; Secure" : "";
   return `auth_session=${encodeURIComponent(
     token,
-  )}; Path=/; HttpOnly; SameSite=None; Secure; Partitioned; Max-Age=${maxAge}`;
+  )}; Path=/; HttpOnly; SameSite=Lax${secureFlag}; Max-Age=${maxAge}`;
 }
 
 export function createClearSessionCookie(): string {
-  return `auth_session=; Path=/; HttpOnly; SameSite=None; Secure; Partitioned; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+  const isProduction = process.env["NODE_ENV"] === "production";
+  const secureFlag = isProduction ? "; Secure" : "";
+  return `auth_session=; Path=/; HttpOnly; SameSite=Lax${secureFlag}; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
 }

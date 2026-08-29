@@ -12,7 +12,8 @@
   "lint": "eslint .",
   "format": "prettier --write .",
   "db:migrate": "node --import tsx src/db/run-migration.ts",
-  "db:push": "drizzle-kit push"
+  "db:push": "drizzle-kit push",
+  "db:studio": "drizzle-kit studio"
 },
   "overrides": {
     "rolldown": "1.2.1"

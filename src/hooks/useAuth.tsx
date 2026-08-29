@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, createContext, useContext } from "react";
+import { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
 import type { User, Permission, AuthState } from "@/types/auth";
 import { toast } from "sonner";
 
@@ -13,6 +13,11 @@ const AuthContext = createContext<AuthContextType | null>(null);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const prevUserRef = useRef<User | null>(null);
+
+  useEffect(() => {
+    prevUserRef.current = user;
+  }, [user]);
 
   const fetchCurrentUser = useCallback(async () => {
     try {
@@ -24,8 +29,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (res.ok && data?.success) {
         setUser(data.user || null);
       } else {
+        const wasLoggedIn = prevUserRef.current !== null;
         setUser(null);
-        if (res.status === 401 && data?.code === "SESSION_INVALID") {
+        if (wasLoggedIn && res.status === 401 && data?.code === "SESSION_INVALID") {
           toast.error(
             data.error ||
               "Your session has ended because this Super Admin account was signed in on another device. Please log in again.",

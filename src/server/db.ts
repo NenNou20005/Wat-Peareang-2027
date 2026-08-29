@@ -501,11 +501,94 @@ class Database {
     return rest;
   }
 
+  public async findUserByIdAsync(id: string): Promise<User | undefined> {
+    const existing = this.findUserById(id);
+    if (existing) return existing;
+
+    const drizzle = getDrizzleDb();
+    if (drizzle) {
+      try {
+        const rows = await drizzle
+          .select()
+          .from(schema.users)
+          .where(eq(schema.users.id, id))
+          .limit(1);
+
+        const u = rows[0];
+        if (u) {
+          const user: User = {
+            id: u.id,
+            email: u.email,
+            name: u.name,
+            role: u.role as UserRole,
+            permissions:
+              typeof u.permissions === "string"
+                ? JSON.parse(u.permissions)
+                : (u.permissions as Permission[]),
+            status: u.status as "active" | "disabled",
+            createdAt: u.createdAt.toISOString(),
+            ...(u.lastLoginAt ? { lastLoginAt: u.lastLoginAt.toISOString() } : {}),
+          };
+          const stored: StoredUser = {
+            ...user,
+            passwordHash: u.passwordHash,
+          };
+          this.data.users.push(stored);
+          return user;
+        }
+      } catch (err) {
+        console.warn("[PostgreSQL findUserByIdAsync Error]:", err);
+      }
+    }
+
+    return undefined;
+  }
+
   public findUserByEmail(email: string): StoredUser | undefined {
     const clean = email.toLowerCase().trim();
     return this.data.users.find((u) => u.email.toLowerCase().trim() === clean);
   }
 
+  public async findUserByEmailAsync(email: string): Promise<StoredUser | undefined> {
+    const clean = email.toLowerCase().trim();
+    const existing = this.findUserByEmail(clean);
+    if (existing) return existing;
+
+    const drizzle = getDrizzleDb();
+    if (drizzle) {
+      try {
+        const rows = await drizzle
+          .select()
+          .from(schema.users)
+          .where(eq(schema.users.email, clean))
+          .limit(1);
+
+        const u = rows[0];
+        if (u) {
+          const stored: StoredUser = {
+            id: u.id,
+            email: u.email,
+            name: u.name,
+            role: u.role as UserRole,
+            permissions:
+              typeof u.permissions === "string"
+                ? JSON.parse(u.permissions)
+                : (u.permissions as Permission[]),
+            status: u.status as "active" | "disabled",
+            createdAt: u.createdAt.toISOString(),
+            passwordHash: u.passwordHash,
+            ...(u.lastLoginAt ? { lastLoginAt: u.lastLoginAt.toISOString() } : {}),
+          };
+          this.data.users.push(stored);
+          return stored;
+        }
+      } catch (err) {
+        console.warn("[PostgreSQL findUserByEmailAsync Error]:", err);
+      }
+    }
+
+    return undefined;
+  }
   public createUser(
     params: {
       name: string;
@@ -771,6 +854,59 @@ class Database {
   }
 
   // --- SESSIONS ---
+  public async createSessionAsync(
+    userId: string,
+    userAgent?: string,
+    ip?: string,
+  ): Promise<Session> {
+    const user = (await this.findUserByIdAsync(userId)) || this.findUserById(userId);
+    const isSuperAdmin = user?.role === "super_admin";
+    const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000;
+    const token = crypto.randomBytes(32).toString("hex");
+
+    const session: Session = {
+      token,
+      userId,
+      expiresAt,
+      createdAt: new Date().toISOString(),
+      ...(userAgent ? { userAgent } : {}),
+      ...(ip ? { ip } : {}),
+    };
+
+    const now = Date.now();
+    let remainingSessions = this.data.sessions.filter((s) => s.expiresAt > now);
+
+    if (isSuperAdmin) {
+      remainingSessions = remainingSessions.filter((s) => s.userId !== userId);
+    }
+
+    remainingSessions.push(session);
+    this.data.sessions = remainingSessions;
+    this.save();
+
+    // Authoritative sync session to Postgres
+    const drizzle = getDrizzleDb();
+    if (drizzle) {
+      try {
+        if (isSuperAdmin) {
+          await drizzle.delete(schema.sessions).where(eq(schema.sessions.userId, userId));
+        }
+        await drizzle.insert(schema.sessions).values({
+          token: session.token,
+          userId: session.userId,
+          userAgent: session.userAgent || null,
+          ip: session.ip || null,
+          expiresAt: new Date(session.expiresAt),
+          createdAt: new Date(session.createdAt),
+        });
+      } catch (e) {
+        console.error("[PostgreSQL createSessionAsync Error]:", e);
+      }
+    }
+
+    return session;
+  }
+
   public createSession(userId: string, userAgent?: string, ip?: string): Session {
     const user = this.findUserById(userId);
     const isSuperAdmin = user?.role === "super_admin";
@@ -797,7 +933,6 @@ class Database {
     this.data.sessions = remainingSessions;
     this.save();
 
-    // Sync session to Postgres
     const drizzle = getDrizzleDb();
     if (drizzle) {
       if (isSuperAdmin) {
@@ -822,16 +957,22 @@ class Database {
     return session;
   }
 
+  public cacheSession(session: Session) {
+    const now = Date.now();
+    this.data.sessions = this.data.sessions.filter(
+      (s) => s.token !== session.token && s.expiresAt > now,
+    );
+    this.data.sessions.push(session);
+  }
+
   public getUserSessions(userId: string): Session[] {
     const now = Date.now();
     return this.data.sessions.filter((s) => s.userId === userId && s.expiresAt > now);
   }
 
   public isSuperAdminSessionActive(userId: string, token: string): boolean {
-    const sessions = this.getUserSessions(userId);
-    if (sessions.length === 0) return false;
-    const lastSession = sessions[sessions.length - 1];
-    return !!lastSession && lastSession.token === token;
+    const session = this.getSession(token);
+    return !!session && session.userId === userId;
   }
 
   public getSession(token: string): Session | undefined {
@@ -844,6 +985,19 @@ class Database {
     return session;
   }
 
+  public async deleteSessionAsync(token: string): Promise<void> {
+    this.data.sessions = this.data.sessions.filter((s) => s.token !== token);
+    this.save();
+    const drizzle = getDrizzleDb();
+    if (drizzle) {
+      try {
+        await drizzle.delete(schema.sessions).where(eq(schema.sessions.token, token));
+      } catch (e) {
+        console.error("[PostgreSQL deleteSessionAsync Error]:", e);
+      }
+    }
+  }
+
   public deleteSession(token: string) {
     this.data.sessions = this.data.sessions.filter((s) => s.token !== token);
     this.save();
@@ -853,6 +1007,19 @@ class Database {
         .delete(schema.sessions)
         .where(eq(schema.sessions.token, token))
         .catch(() => {});
+    }
+  }
+
+  public async invalidateUserSessionsAsync(userId: string): Promise<void> {
+    this.data.sessions = this.data.sessions.filter((s) => s.userId !== userId);
+    this.save();
+    const drizzle = getDrizzleDb();
+    if (drizzle) {
+      try {
+        await drizzle.delete(schema.sessions).where(eq(schema.sessions.userId, userId));
+      } catch (e) {
+        console.error("[PostgreSQL invalidateUserSessionsAsync Error]:", e);
+      }
     }
   }
 

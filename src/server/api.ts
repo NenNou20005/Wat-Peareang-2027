@@ -4,7 +4,7 @@ import path from "node:path";
 import { db, verifyPassword } from "./db";
 import { checkDbHealth, getDrizzleDb } from "../db/index";
 import * as schema from "../db/schema";
-import { eq, asc, desc } from "drizzle-orm";
+import { eq, asc, desc, sql } from "drizzle-orm";
 import { getOrGenerateRequestId, logger } from "./logger";
 import { getStorageProvider } from "./storage/index";
 import { detectImageMagicBytes } from "./validation";
@@ -175,7 +175,10 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
         );
       }
 
-      const userWithHash = db.findUserByEmail(email);
+      let userWithHash = await db.findUserByEmailAsync(email);
+      if (!userWithHash) {
+        userWithHash = db.findUserByEmail(email);
+      }
 
       // Timing-safe verification & generic error response for security
       if (!userWithHash || !verifyPassword(password, userWithHash.passwordHash)) {
@@ -202,7 +205,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       resetLoginRateLimit(ip);
 
       // Create session
-      const session = db.createSession(userWithHash.id, userAgent, ip);
+      const session = await db.createSessionAsync(userWithHash.id, userAgent, ip);
       db.updateLastLogin(userWithHash.id);
 
       db.logActivity({
@@ -227,9 +230,9 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // POST /api/auth/logout
   if (pathname === "/api/auth/logout" && method === "POST") {
-    const auth = authenticateRequest(request);
+    const auth = await authenticateRequest(request);
     if (auth.token) {
-      db.deleteSession(auth.token);
+      await db.deleteSessionAsync(auth.token);
     }
     if (auth.user) {
       db.logActivity({
@@ -248,7 +251,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // GET /api/auth/me
   if (pathname === "/api/auth/me" && method === "GET") {
-    const auth = authenticateRequest(request);
+    const auth = await authenticateRequest(request);
     if (!auth.isAuthenticated || !auth.user) {
       if (auth.hadSessionToken) {
         return json(
@@ -272,7 +275,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // --- 2. ADMIN DASHBOARD STATS (LIVE POSTGRESQL + LOCAL SYNC) ---
   if (pathname === "/api/admin/dashboard" && method === "GET") {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
 
     try {
@@ -315,7 +318,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     const isUsersRoute = pathname.startsWith("/api/admin/users");
     const basePath = isUsersRoute ? "/api/admin/users" : "/api/admin/editors";
 
-    const auth = requireAuth(request, "manage_users");
+    const auth = await requireAuth(request, "manage_users");
     if (auth instanceof Response) return auth;
     const currentUser = auth.user;
 
@@ -397,7 +400,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     }
   }
 
-  // --- 4. FESTIVALS MANAGEMENT ---
+  // --- 4. FESTIVALS MANAGEMENT (POSTGRESQL + DRIZZLE AUTHORITATIVE) ---
   if (pathname.startsWith("/api/admin/festivals")) {
     if (pathname === "/api/admin/festivals" && method === "GET") {
       try {
@@ -406,6 +409,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
           const rows = await drizzle
             .select()
             .from(schema.festivals)
+            .where(sql`${schema.festivals.status} != 'trashed'`)
             .orderBy(asc(schema.festivals.createdAt));
           const list = rows.map((r) => ({
             id: r.id,
@@ -417,46 +421,199 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
             description: r.description || undefined,
             status: r.status,
             isCustom: r.isCustom,
+            createdAt: r.createdAt ? r.createdAt.toISOString() : undefined,
+            updatedAt: r.updatedAt ? r.updatedAt.toISOString() : undefined,
           }));
           return json({ success: true, data: list });
         }
       } catch (err) {
         logger.error("Failed to read admin festivals from PostgreSQL", { error: err });
       }
-      return json({ success: true, data: db.getFestivals() });
+      return json({ success: true, data: [] });
     }
 
-    const auth = requireAuth(request, "manage_festivals");
+    const auth = await requireAuth(request, "manage_festivals");
     if (auth instanceof Response) return auth;
     const currentUser = auth.user;
 
-    // POST /api/admin/festivals
+    // POST /api/admin/festivals (Create Festival in PostgreSQL)
     if (pathname === "/api/admin/festivals" && method === "POST") {
+      const drizzle = getDrizzleDb();
+      if (!drizzle) return json({ success: false, error: "Database connection unavailable" }, 500);
+
       try {
         const body = await request.json();
-        const { id, name, emoji, accent, month, description, coverUrl } = body;
-        if (!name || !emoji) {
+        const { id, name, emoji, accent, month, description, coverUrl, cover, isCustom, status } =
+          body;
+        if (
+          !name ||
+          typeof name !== "string" ||
+          !name.trim() ||
+          !emoji ||
+          typeof emoji !== "string" ||
+          !emoji.trim()
+        ) {
           return json({ success: false, error: "សូមបញ្ចូលឈ្មោះ និងរូបសញ្ញាបុណ្យ។" }, 400);
         }
-        const festId = id || `fest-${Date.now()}`;
-        const result = db.addFestival(
-          {
-            id: festId,
-            name: name.trim(),
-            emoji: emoji.trim(),
-            accent: accent || "oklch(0.74 0.132 76)",
-            month: month || "ពេញមួយឆ្នាំ",
-            description: description || undefined,
-            coverUrl: coverUrl || undefined,
-            isCustom: true,
-            status: "published",
-          },
-          currentUser,
-        );
 
-        if (!result.success) return json({ success: false, error: result.error }, 400);
-        return json({ success: true, data: db.getFestivals() }, 201);
-      } catch {
+        const festId = typeof id === "string" && id.trim() ? id.trim() : `fest-${Date.now()}`;
+
+        // Check if ID already exists
+        const existing = await drizzle
+          .select({ id: schema.festivals.id })
+          .from(schema.festivals)
+          .where(eq(schema.festivals.id, festId))
+          .limit(1);
+
+        if (existing.length > 0) {
+          return json(
+            { success: false, error: "ID ពិធីបុណ្យនេះមានរួចហើយ សូមជ្រើសរើស ID ផ្សេង។" },
+            400,
+          );
+        }
+
+        const now = new Date();
+        const newRecord = {
+          id: festId,
+          name: name.trim(),
+          emoji: emoji.trim(),
+          accent:
+            typeof accent === "string" && accent.trim() ? accent.trim() : "oklch(0.74 0.132 76)",
+          month: typeof month === "string" && month.trim() ? month.trim() : "ពេញមួយឆ្នាំ",
+          description: description ? String(description).trim() : null,
+          coverUrl: coverUrl || cover || null,
+          isCustom: isCustom !== undefined ? Boolean(isCustom) : true,
+          status: typeof status === "string" && status.trim() ? status.trim() : "published",
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        await drizzle.insert(schema.festivals).values(newRecord);
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "CREATE_FESTIVAL",
+          resource: "FESTIVAL",
+          resourceId: festId,
+          details: `បានបង្កើតពិធីបុណ្យ «${newRecord.name}» (ID: ${festId})`,
+          ip,
+        });
+
+        const rows = await drizzle
+          .select()
+          .from(schema.festivals)
+          .where(sql`${schema.festivals.status} != 'trashed'`)
+          .orderBy(asc(schema.festivals.createdAt));
+        const list = rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          emoji: r.emoji,
+          accent: r.accent,
+          month: r.month,
+          coverUrl: r.coverUrl || undefined,
+          description: r.description || undefined,
+          status: r.status,
+          isCustom: r.isCustom,
+          createdAt: r.createdAt ? r.createdAt.toISOString() : undefined,
+          updatedAt: r.updatedAt ? r.updatedAt.toISOString() : undefined,
+        }));
+
+        return json({ success: true, data: list }, 201);
+      } catch (err: unknown) {
+        const errorString = err instanceof Error ? err.message : String(err);
+        const errorCode =
+          typeof err === "object" && err !== null && "code" in err
+            ? String((err as { code: unknown }).code)
+            : "";
+        if (
+          errorString.includes("unique constraint") ||
+          errorString.includes("duplicate key") ||
+          errorString.includes("festivals_pkey") ||
+          errorCode === "23505"
+        ) {
+          return json(
+            { success: false, error: "ID ពិធីបុណ្យនេះមានរួចហើយ សូមជ្រើសរើស ID ផ្សេង។" },
+            400,
+          );
+        }
+        return json({ success: false, error: "ទិន្នន័យមិនត្រឹមត្រូវ។" }, 400);
+      }
+    }
+
+    // PUT /api/admin/festivals/:id (Update Festival in PostgreSQL)
+    if (pathname.startsWith("/api/admin/festivals/") && method === "PUT") {
+      const targetId = pathname.replace("/api/admin/festivals/", "").trim();
+      const drizzle = getDrizzleDb();
+      if (!drizzle) return json({ success: false, error: "Database connection unavailable" }, 500);
+
+      try {
+        const existing = await drizzle
+          .select()
+          .from(schema.festivals)
+          .where(eq(schema.festivals.id, targetId))
+          .limit(1);
+
+        const targetRecord = existing[0];
+        if (!targetRecord) {
+          return json({ success: false, error: "រកមិនឃើញពិធីបុណ្យនេះឡើយ។" }, 404);
+        }
+
+        const body = await request.json();
+        const updateData: Partial<typeof schema.festivals.$inferInsert> = {
+          updatedAt: new Date(),
+        };
+        if (body.name !== undefined) updateData.name = String(body.name).trim();
+        if (body.emoji !== undefined) updateData.emoji = String(body.emoji).trim();
+        if (body.accent !== undefined) updateData.accent = String(body.accent).trim();
+        if (body.month !== undefined) updateData.month = String(body.month).trim();
+        if (body.description !== undefined)
+          updateData.description = body.description ? String(body.description).trim() : null;
+        if (body.coverUrl !== undefined || body.cover !== undefined) {
+          updateData.coverUrl = body.coverUrl || body.cover || null;
+        }
+        if (body.status !== undefined) updateData.status = String(body.status);
+        if (body.isCustom !== undefined) updateData.isCustom = Boolean(body.isCustom);
+
+        await drizzle
+          .update(schema.festivals)
+          .set(updateData)
+          .where(eq(schema.festivals.id, targetId));
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "UPDATE_FESTIVAL",
+          resource: "FESTIVAL",
+          resourceId: targetId,
+          details: `បានកែសម្រួលព័ត៌មានពិធីបុណ្យ "${updateData.name || targetRecord.name}"`,
+          ip,
+        });
+
+        const rows = await drizzle
+          .select()
+          .from(schema.festivals)
+          .where(sql`${schema.festivals.status} != 'trashed'`)
+          .orderBy(asc(schema.festivals.createdAt));
+        const list = rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          emoji: r.emoji,
+          accent: r.accent,
+          month: r.month,
+          coverUrl: r.coverUrl || undefined,
+          description: r.description || undefined,
+          status: r.status,
+          isCustom: r.isCustom,
+          createdAt: r.createdAt ? r.createdAt.toISOString() : undefined,
+          updatedAt: r.updatedAt ? r.updatedAt.toISOString() : undefined,
+        }));
+
+        return json({ success: true, data: list });
+      } catch (err) {
+        logger.error("Failed to update festival in PostgreSQL", { error: err, targetId });
         return json({ success: false, error: "ទិន្នន័យមិនត្រឹមត្រូវ។" }, 400);
       }
     }
@@ -468,24 +625,90 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       method === "POST"
     ) {
       const targetId = pathname.replace("/api/admin/festivals/", "").replace("/trash", "").trim();
-      const result = db.trashFestival(targetId, currentUser);
-      if (!result.success) return json({ success: false, error: result.error }, 400);
-      return json({ success: true, message: "បានផ្លាស់ទីទៅកាន់ធុងសំរាមរួចរាល់។" });
+      const drizzle = getDrizzleDb();
+      if (!drizzle) return json({ success: false, error: "Database connection unavailable" }, 500);
+
+      try {
+        const existing = await drizzle
+          .select()
+          .from(schema.festivals)
+          .where(eq(schema.festivals.id, targetId))
+          .limit(1);
+
+        const targetRecord = existing[0];
+        if (!targetRecord) {
+          return json({ success: false, error: "រកមិនឃើញពិធីបុណ្យនេះឡើយ។" }, 404);
+        }
+
+        await drizzle
+          .update(schema.festivals)
+          .set({ status: "trashed", updatedAt: new Date() })
+          .where(eq(schema.festivals.id, targetId));
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "TRASH_FESTIVAL",
+          resource: "FESTIVAL",
+          resourceId: targetId,
+          details: `បានផ្លាស់ទីពិធីបុណ្យ "${targetRecord.name}" ទៅកាន់ធុងសំរាម`,
+          ip,
+        });
+
+        return json({ success: true, message: "បានផ្លាស់ទីទៅកាន់ធុងសំរាមរួចរាល់។" });
+      } catch (err) {
+        logger.error("Failed to trash festival in PostgreSQL", { error: err, targetId });
+        return json({ success: false, error: "Failed to trash festival" }, 500);
+      }
     }
 
-    // POST /api/admin/festivals/:id/restore (Restore from Trash)
+    // POST /api/admin/festivals/:id/restore (Restore)
     if (
       pathname.startsWith("/api/admin/festivals/") &&
       pathname.endsWith("/restore") &&
       method === "POST"
     ) {
       const targetId = pathname.replace("/api/admin/festivals/", "").replace("/restore", "").trim();
-      const result = db.restoreFestival(targetId, currentUser);
-      if (!result.success) return json({ success: false, error: result.error }, 400);
-      return json({ success: true, message: "បានស្តារឡើងវិញដោយជោគជ័យ។" });
+      const drizzle = getDrizzleDb();
+      if (!drizzle) return json({ success: false, error: "Database connection unavailable" }, 500);
+
+      try {
+        const existing = await drizzle
+          .select()
+          .from(schema.festivals)
+          .where(eq(schema.festivals.id, targetId))
+          .limit(1);
+
+        const targetRecord = existing[0];
+        if (!targetRecord) {
+          return json({ success: false, error: "រកមិនឃើញពិធីបុណ្យនេះឡើយ។" }, 404);
+        }
+
+        await drizzle
+          .update(schema.festivals)
+          .set({ status: "published", updatedAt: new Date() })
+          .where(eq(schema.festivals.id, targetId));
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "RESTORE_FESTIVAL",
+          resource: "FESTIVAL",
+          resourceId: targetId,
+          details: `បានស្តារពិធីបុណ្យ "${targetRecord.name}" ឡើងវិញ`,
+          ip,
+        });
+
+        return json({ success: true, message: "បានស្តារឡើងវិញដោយជោគជ័យ។" });
+      } catch (err) {
+        logger.error("Failed to restore festival in PostgreSQL", { error: err, targetId });
+        return json({ success: false, error: "Failed to restore festival" }, 500);
+      }
     }
 
-    // DELETE /api/admin/festivals/:id/permanent (Super Admin Permanent Delete)
+    // DELETE /api/admin/festivals/:id/permanent (Permanent Delete)
     if (
       pathname.startsWith("/api/admin/festivals/") &&
       pathname.endsWith("/permanent") &&
@@ -495,38 +718,91 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
         .replace("/api/admin/festivals/", "")
         .replace("/permanent", "")
         .trim();
-      const result = db.permanentDeleteFestival(targetId, currentUser);
-      if (!result.success) return json({ success: false, error: result.error }, 400);
-      return json({ success: true, message: "បានលុបពិធីបុណ្យជាអចិន្ត្រៃយ៍។" });
-    }
+      const drizzle = getDrizzleDb();
+      if (!drizzle) return json({ success: false, error: "Database connection unavailable" }, 500);
 
-    // PUT /api/admin/festivals/:id
-    if (pathname.startsWith("/api/admin/festivals/") && method === "PUT") {
-      const targetId = pathname.replace("/api/admin/festivals/", "").trim();
       try {
-        const body = await request.json();
-        const result = db.updateFestival(targetId, body, currentUser);
-        if (!result.success) return json({ success: false, error: result.error }, 400);
-        return json({ success: true, data: db.getFestivals() });
-      } catch {
-        return json({ success: false, error: "ទិន្នន័យមិនត្រឹមត្រូវ។" }, 400);
+        const existing = await drizzle
+          .select()
+          .from(schema.festivals)
+          .where(eq(schema.festivals.id, targetId))
+          .limit(1);
+
+        const targetRecord = existing[0];
+        if (!targetRecord) {
+          return json({ success: false, error: "រកមិនឃើញពិធីបុណ្យនេះឡើយ។" }, 404);
+        }
+
+        await drizzle.delete(schema.festivals).where(eq(schema.festivals.id, targetId));
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "PERMANENT_DELETE_FESTIVAL",
+          resource: "FESTIVAL",
+          resourceId: targetId,
+          details: `បានលុបពិធីបុណ្យ "${targetRecord.name}" ជាអចិន្ត្រៃយ៍`,
+          ip,
+        });
+
+        return json({ success: true, message: "បានលុបពិធីបុណ្យជាអចិន្ត្រៃយ៍។" });
+      } catch (err) {
+        logger.error("Failed to permanently delete festival from PostgreSQL", {
+          error: err,
+          targetId,
+        });
+        return json({ success: false, error: "Failed to delete festival" }, 500);
       }
     }
 
-    // DELETE /api/admin/festivals/:id (Defaults to Soft Delete Trash)
+    // DELETE /api/admin/festivals/:id (Soft Delete Default)
     if (pathname.startsWith("/api/admin/festivals/") && method === "DELETE") {
       const targetId = pathname.replace("/api/admin/festivals/", "").trim();
-      const result = db.trashFestival(targetId, currentUser);
-      if (!result.success) return json({ success: false, error: result.error }, 400);
-      return json({ success: true, message: "បានផ្លាស់ទីទៅកាន់ធុងសំរាមរួចរាល់។" });
+      const drizzle = getDrizzleDb();
+      if (!drizzle) return json({ success: false, error: "Database connection unavailable" }, 500);
+
+      try {
+        const existing = await drizzle
+          .select()
+          .from(schema.festivals)
+          .where(eq(schema.festivals.id, targetId))
+          .limit(1);
+
+        const targetRecord = existing[0];
+        if (!targetRecord) {
+          return json({ success: false, error: "រកមិនឃើញពិធីបុណ្យនេះឡើយ។" }, 404);
+        }
+
+        await drizzle
+          .update(schema.festivals)
+          .set({ status: "trashed", updatedAt: new Date() })
+          .where(eq(schema.festivals.id, targetId));
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "TRASH_FESTIVAL",
+          resource: "FESTIVAL",
+          resourceId: targetId,
+          details: `បានផ្លាស់ទីពិធីបុណ្យ "${targetRecord.name}" ទៅកាន់ធុងសំរាម`,
+          ip,
+        });
+
+        return json({ success: true, message: "បានផ្លាស់ទីទៅកាន់ធុងសំរាមរួចរាល់។" });
+      } catch (err) {
+        logger.error("Failed to trash festival in PostgreSQL", { error: err, targetId });
+        return json({ success: false, error: "Failed to trash festival" }, 500);
+      }
     }
   }
 
   // --- 5. YEARS MANAGEMENT ---
   if (pathname.startsWith("/api/admin/years")) {
     if (pathname === "/api/admin/years" && method === "GET") {
+      const drizzle = getDrizzleDb();
       try {
-        const drizzle = getDrizzleDb();
         if (drizzle) {
           const rows = await drizzle
             .select({ year: schema.years.year })
@@ -540,7 +816,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       return json({ success: true, data: db.getYears() });
     }
 
-    const auth = requireAuth(request, "manage_years");
+    const auth = await requireAuth(request, "manage_years");
     if (auth instanceof Response) return auth;
     const currentUser = auth.user;
 
@@ -611,7 +887,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       }
     }
 
-    const auth = requireAuth(request, "manage_albums");
+    const auth = await requireAuth(request, "manage_albums");
     if (auth instanceof Response) return auth;
     const currentUser = auth.user;
 
@@ -738,7 +1014,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
     // POST /api/admin/images/upload (Binary multipart image upload)
     if (pathname === "/api/admin/images/upload" && method === "POST") {
-      const auth = requireAuth(request, "upload_images");
+      const auth = await requireAuth(request, "upload_images");
       if (auth instanceof Response) return auth;
       const currentUser = auth.user;
 
@@ -870,7 +1146,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
     // POST /api/admin/images (Upload Image Metadata - JSON support with strict URL validation)
     if (pathname === "/api/admin/images" && method === "POST") {
-      const auth = requireAuth(request, "upload_images");
+      const auth = await requireAuth(request, "upload_images");
       if (auth instanceof Response) return auth;
       const currentUser = auth.user;
 
@@ -947,7 +1223,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
     // POST /api/admin/images/batch (Batch Operations: trash, restore, move, permanentDelete)
     if (pathname === "/api/admin/images/batch" && method === "POST") {
-      const auth = requireAuth(request, "edit_images");
+      const auth = await requireAuth(request, "edit_images");
       if (auth instanceof Response) return auth;
       const currentUser = auth.user;
 
@@ -1033,7 +1309,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       pathname.endsWith("/trash") &&
       method === "POST"
     ) {
-      const auth = requireAuth(request, "delete_images");
+      const auth = await requireAuth(request, "delete_images");
       if (auth instanceof Response) return auth;
       const currentUser = auth.user;
 
@@ -1049,7 +1325,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       pathname.endsWith("/restore") &&
       method === "POST"
     ) {
-      const auth = requireAuth(request, "manage_trash");
+      const auth = await requireAuth(request, "manage_trash");
       if (auth instanceof Response) return auth;
       const currentUser = auth.user;
 
@@ -1065,7 +1341,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       pathname.endsWith("/permanent") &&
       method === "DELETE"
     ) {
-      const auth = requireSuperAdmin(request);
+      const auth = await requireSuperAdmin(request);
       if (auth instanceof Response) return auth;
       const currentUser = auth.user;
 
@@ -1077,7 +1353,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
     // PUT /api/admin/images/:id (Update Metadata or Move to another album)
     if (pathname.startsWith("/api/admin/images/") && method === "PUT") {
-      const auth = requireAuth(request, "edit_images");
+      const auth = await requireAuth(request, "edit_images");
       if (auth instanceof Response) return auth;
       const currentUser = auth.user;
 
@@ -1094,7 +1370,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
     // DELETE /api/admin/images/:id (Defaults to Soft Delete Trash)
     if (pathname.startsWith("/api/admin/images/") && method === "DELETE") {
-      const auth = requireAuth(request, "delete_images");
+      const auth = await requireAuth(request, "delete_images");
       if (auth instanceof Response) return auth;
       const currentUser = auth.user;
 
@@ -1107,7 +1383,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // --- 8. TRASH & RESTORE MANAGEMENT ---
   if (pathname === "/api/admin/trash" && method === "GET") {
-    const auth = requireAuth(request, "manage_trash");
+    const auth = await requireAuth(request, "manage_trash");
     if (auth instanceof Response) return auth;
 
     try {
@@ -1124,7 +1400,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     (pathname === "/api/admin/activity-logs" || pathname === "/api/admin/logs") &&
     method === "GET"
   ) {
-    const auth = requireAuth(request, "view_logs");
+    const auth = await requireAuth(request, "view_logs");
     if (auth instanceof Response) return auth;
 
     const limit = Number(url.searchParams.get("limit") || "100");
@@ -1134,7 +1410,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // --- 10. ADMIN SETTINGS (CHANGE PASSWORD) ---
   if (pathname === "/api/admin/settings/password" && (method === "PUT" || method === "POST")) {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
     const currentUser = auth.user;
 
@@ -1191,7 +1467,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       db.changePassword(currentUser.id, newPassword);
 
       // Invalidate all active sessions of this user
-      db.invalidateUserSessions(currentUser.id);
+      await db.invalidateUserSessionsAsync(currentUser.id);
 
       db.logActivity({
         userId: currentUser.id,
@@ -1222,7 +1498,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // --- 11. SYSTEM & DATABASE STATUS ENDPOINTS (SUPER ADMIN) ---
   if (pathname === "/api/admin/system/database-status" && method === "GET") {
-    const authResult = requireSuperAdmin(request);
+    const authResult = await requireSuperAdmin(request);
     if (authResult instanceof Response) return authResult;
 
     const stats = db.getDashboardStats();
@@ -1235,7 +1511,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // POST /api/admin/system/migrate
   if (pathname === "/api/admin/system/migrate" && method === "POST") {
-    const authResult = requireSuperAdmin(request);
+    const authResult = await requireSuperAdmin(request);
     if (authResult instanceof Response) return authResult;
 
     try {
@@ -1252,7 +1528,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // POST /api/admin/system/reconcile
   if (pathname === "/api/admin/system/reconcile" && method === "POST") {
-    const authResult = requireSuperAdmin(request);
+    const authResult = await requireSuperAdmin(request);
     if (authResult instanceof Response) return authResult;
 
     try {
@@ -1477,7 +1753,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // GET /api/admin/analytics/overview (Admin RBAC required)
   if (pathname === "/api/admin/analytics/overview" && method === "GET") {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
 
     try {
@@ -1495,7 +1771,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // GET /api/admin/analytics/views (Admin RBAC required)
   if (pathname === "/api/admin/analytics/views" && method === "GET") {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
 
     try {
@@ -1512,7 +1788,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // GET /api/admin/analytics/top-albums (Admin RBAC required)
   if (pathname === "/api/admin/analytics/top-albums" && method === "GET") {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
 
     try {
@@ -1532,7 +1808,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // GET /api/admin/analytics/top-images (Admin RBAC required)
   if (pathname === "/api/admin/analytics/top-images" && method === "GET") {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
 
     try {
@@ -1778,7 +2054,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // GET /api/admin/analytics/interactions (Admin RBAC required)
   if (pathname === "/api/admin/analytics/interactions" && method === "GET") {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
 
     try {
@@ -1865,7 +2141,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // GET /api/admin/analytics/search (Admin RBAC required)
   if (pathname === "/api/admin/analytics/search" && method === "GET") {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
 
     try {
@@ -1883,7 +2159,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // GET /api/admin/analytics/popularity (Admin RBAC required)
   if (pathname === "/api/admin/analytics/popularity" && method === "GET") {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
 
     try {
@@ -1903,7 +2179,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // GET /api/admin/reports/summary (Admin RBAC required)
   if (pathname === "/api/admin/reports/summary" && method === "GET") {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
 
     try {
@@ -1921,7 +2197,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // GET /api/admin/reports/content-performance (Admin RBAC required)
   if (pathname === "/api/admin/reports/content-performance" && method === "GET") {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
 
     try {
@@ -1942,7 +2218,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // GET /api/admin/reports/growth (Admin RBAC required)
   if (pathname === "/api/admin/reports/growth" && method === "GET") {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
 
     try {
@@ -1957,7 +2233,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // GET /api/admin/reports/activity (Admin RBAC required)
   if (pathname === "/api/admin/reports/activity" && method === "GET") {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
 
     try {
@@ -1975,7 +2251,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // GET /api/admin/reports/export (Admin RBAC required)
   if (pathname === "/api/admin/reports/export" && method === "GET") {
-    const auth = requireAuth(request);
+    const auth = await requireAuth(request);
     if (auth instanceof Response) return auth;
 
     try {
