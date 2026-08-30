@@ -210,35 +210,34 @@ export async function seedStaticArchiveToPostgres(): Promise<SeedSummary> {
             },
           });
 
-        // 6. Seed Sample Gallery Images for each album
+        // 6. Seed Sample Gallery Images for each album (batched per album)
         // Creates valid relational images linked to album and festival
         const photos = albumPhotos(alb);
-        for (const photo of photos) {
-          await db
-            .insert(schema.images)
-            .values({
-              id: photo.id,
-              albumId: alb.id,
-              title: photo.caption,
-              description: `រូបថតប្រវត្តិសាស្ត្រក្នុងកម្រងរូបភាព ${alb.title} ឆ្នាំ ${alb.year}`,
-              url: photo.src,
-              thumbnailUrl: photo.src,
-              size: 1024 * 512, // approx 512 KB
-              mimeType: "image/jpeg",
-              photographer: "គណៈកម្មការវត្តពារាំង",
-              dateTaken: `${alb.year}`,
-              copyright: "វត្តពារាំង (Wat Peareang)",
-              tags: `${fest.name},${alb.year},វត្តពារាំង`,
-              status: "published",
-              viewsCount: 0,
-              likesCount: 0,
-              downloadsCount: 0,
-              sharesCount: 0,
-              uploadedBy: "super-admin-root",
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            })
-            .onConflictDoNothing();
+        const imageRows = photos.map((photo) => ({
+          id: photo.id,
+          albumId: alb.id,
+          title: photo.caption,
+          description: `រូបថតប្រវត្តិសាស្ត្រក្នុងកម្រងរូបភាព ${alb.title} ឆ្នាំ ${alb.year}`,
+          url: photo.src,
+          thumbnailUrl: photo.src,
+          size: 1024 * 512, // approx 512 KB
+          mimeType: "image/jpeg",
+          photographer: "គណៈកម្មការវត្តពារាំង",
+          dateTaken: `${alb.year}`,
+          copyright: "វត្តពារាំង (Wat Peareang)",
+          tags: `${fest.name},${alb.year},វត្តពារាំង`,
+          status: "published",
+          viewsCount: 0,
+          likesCount: 0,
+          downloadsCount: 0,
+          sharesCount: 0,
+          uploadedBy: "super-admin-root",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }));
+
+        if (imageRows.length > 0) {
+          await db.insert(schema.images).values(imageRows).onConflictDoNothing();
         }
       }
     }

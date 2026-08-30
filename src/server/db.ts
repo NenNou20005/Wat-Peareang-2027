@@ -10,6 +10,7 @@ import { getDrizzleDb, isPostgresConfigured, getPgPool } from "../db/index.ts";
 import * as schema from "../db/schema.ts";
 import { eq, and, sql, desc, gte, inArray } from "drizzle-orm";
 import { migrateJsonToPostgres, initializeDatabaseSchema } from "../db/migrate.ts";
+import { seedStaticArchiveToPostgres } from "../db/seed-archive.ts";
 import {
   recordPostgresVisitorSession,
   recordPostgresView,
@@ -226,6 +227,25 @@ class Database {
         this.postgresReady = true;
         console.log("[Wat Peareang Archive]: Connected to PostgreSQL database successfully.");
         await this.ensureSuperAdminInPostgres();
+
+        // If PostgreSQL has 0 archive images (e.g. fresh production DB), seed the full archive dataset
+        const drizzle = getDrizzleDb();
+        if (drizzle) {
+          const imagesCountRes = await drizzle
+            .select({ count: sql<number>`count(*)` })
+            .from(schema.images);
+          const imagesCount = Number(imagesCountRes[0]?.count || 0);
+          if (imagesCount === 0) {
+            console.log(
+              "[Wat Peareang Archive]: PostgreSQL has 0 images. Auto-populating initial archive dataset...",
+            );
+            await seedStaticArchiveToPostgres();
+            console.log(
+              "[Wat Peareang Archive]: Initial archive dataset successfully populated into PostgreSQL.",
+            );
+          }
+        }
+
         await this.hydrateFromPostgres();
       } catch (err) {
         if (isProd) {

@@ -35,7 +35,6 @@ export function getPoolConfig(): PoolConfig | null {
         (trimmedUrl.includes("sslmode=require") ||
           trimmedUrl.includes("ssl=true") ||
           trimmedUrl.includes("sslmode=no-verify") ||
-          process.env["NODE_ENV"] === "production" ||
           !isLocalhost);
 
       return {
@@ -53,8 +52,7 @@ export function getPoolConfig(): PoolConfig | null {
     const isLocalhost =
       process.env["SQL_HOST"] === "localhost" || process.env["SQL_HOST"] === "127.0.0.1";
     const isExplicitSslDisable = process.env["PGSSLMODE"] === "disable";
-    const shouldEnableSsl =
-      !isExplicitSslDisable && (process.env["NODE_ENV"] === "production" || !isLocalhost);
+    const shouldEnableSsl = !isExplicitSslDisable && !isLocalhost;
     return {
       host: process.env["SQL_HOST"],
       user: process.env["SQL_USER"] || "postgres",
@@ -73,8 +71,7 @@ export function getPoolConfig(): PoolConfig | null {
     const isLocalhost =
       process.env["PGHOST"] === "localhost" || process.env["PGHOST"] === "127.0.0.1";
     const isExplicitSslDisable = process.env["PGSSLMODE"] === "disable";
-    const shouldEnableSsl =
-      !isExplicitSslDisable && (process.env["NODE_ENV"] === "production" || !isLocalhost);
+    const shouldEnableSsl = !isExplicitSslDisable && !isLocalhost;
     return {
       host: process.env["PGHOST"],
       user: process.env["PGUSER"] || "postgres",
