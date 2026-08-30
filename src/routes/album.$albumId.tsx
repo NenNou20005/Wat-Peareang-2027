@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { Share2, Download, Images, ArrowLeft } from "lucide-react";
 import { Lightbox } from "@/components/site/Lightbox";
 import { toKhmerNumber, type Album } from "@/data/archive";
-import { cn } from "@/lib/utils";
+import { cn, downloadArchiveImage } from "@/lib/utils";
 import { toast } from "sonner";
 import { useAlbum, useAlbumPhotos } from "@/hooks/useArchiveData";
 import { trackAlbumView } from "@/lib/analytics";
@@ -127,7 +127,18 @@ function AlbumDetail() {
               </button>
               <button
                 type="button"
-                onClick={() => toast("កំពុងរៀបចំ Download...")}
+                onClick={async () => {
+                  const targetSrc = album.festival?.cover || photos[0]?.src;
+                  if (!targetSrc) return;
+                  toast("កំពុងទាញយករូបភាព...");
+                  const filename = `${album.id || "album"}-cover.jpg`;
+                  const success = await downloadArchiveImage(targetSrc, filename);
+                  if (success) {
+                    toast.success("បានទាញយករូបភាពដោយជោគជ័យ");
+                  } else {
+                    toast.error("មិនអាចទាញយករូបភាពបានឡើយ");
+                  }
+                }}
                 className="inline-flex items-center gap-1.5 rounded-full bg-background/90 px-4 py-2 text-sm hover:bg-background transition-colors"
               >
                 <Download className="h-4 w-4" /> Download

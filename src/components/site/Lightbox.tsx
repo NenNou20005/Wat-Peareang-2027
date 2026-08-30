@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, X, Share2, Download, ImageOff, Loader2 } from "lucide-react";
 import { toKhmerNumber } from "@/data/archive";
 import { trackImageView } from "@/lib/analytics";
+import { downloadArchiveImage } from "@/lib/utils";
 import { LikeButton } from "./LikeButton";
 import { FavoriteButton } from "./FavoriteButton";
 import { toast } from "sonner";
@@ -175,7 +176,17 @@ export function Lightbox({
           </button>
           <button
             type="button"
-            onClick={() => toast("កំពុងទាញយករូបភាព...")}
+            onClick={async () => {
+              if (!photo?.src) return;
+              toast("កំពុងទាញយករូបភាព...");
+              const filename = `${photo.id || "wat-peareang-photo"}.jpg`;
+              const success = await downloadArchiveImage(photo.src, filename);
+              if (success) {
+                toast.success("បានទាញយករូបភាពដោយជោគជ័យ");
+              } else {
+                toast.error("មិនអាចទាញយករូបភាពបានឡើយ");
+              }
+            }}
             aria-label="Download"
             className="grid h-8 w-8 place-items-center rounded-full bg-background/15 text-temple-foreground hover:bg-background/25 transition-colors"
           >
