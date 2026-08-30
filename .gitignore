@@ -42,3 +42,12 @@ public/uploads/*
 
 # Local data
 .data/
+.env
+.env.*
+!.env.example
+
+backups/
+*.dump
+backup-render.ps1
+
+tgreSQL SSL for cloud deployments*
