@@ -1,12 +1,21 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AdminLayout } from "@/components/admin/AdminLayout";
 import { useAuth } from "@/hooks/useAuth";
-import { Key, ShieldCheck, UserCheck, Lock } from "lucide-react";
+import { Key, ShieldCheck, UserCheck, Keyboard, RotateCcw, Save, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import {
+  getStoredAdminShortcut,
+  saveStoredAdminShortcut,
+  resetStoredAdminShortcut,
+  formatShortcutKeyTokens,
+  DEFAULT_ADMIN_SHORTCUT,
+  isMacOS,
+  type AdminShortcutConfig,
+} from "@/config/adminShortcut";
 
 export const Route = createFileRoute("/admin/settings")({
   head: () => ({
@@ -18,11 +27,158 @@ export const Route = createFileRoute("/admin/settings")({
 function AdminSettingsPage() {
   const { user, isSuperAdmin, refetchUser } = useAuth();
   const navigate = useNavigate();
+
+  // Password state
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmittingPassword, setIsSubmittingPassword] = useState(false);
 
+  // Shortcut state
+  const [savedShortcut, setSavedShortcut] = useState<AdminShortcutConfig>(getStoredAdminShortcut);
+  const [recordedShortcut, setRecordedShortcut] =
+    useState<AdminShortcutConfig>(getStoredAdminShortcut);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isSavingShortcut, setIsSavingShortcut] = useState(false);
+  const [liveKeysPreview, setLiveKeysPreview] = useState<string[]>([]);
+  const isMac = isMacOS();
+
+  // Load shortcut from server on mount
+  useEffect(() => {
+    fetch("/api/admin/settings/shortcut")
+      .then((res) => res.json())
+      .then((res) => {
+        if (res.success && res.data) {
+          setSavedShortcut(res.data);
+          setRecordedShortcut(res.data);
+          saveStoredAdminShortcut(res.data);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Shortcut Recorder Listener
+  useEffect(() => {
+    if (!isRecording) return;
+
+    function handleKeyDown(e: KeyboardEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Cancel on Escape if no modifiers are held
+      if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+        setIsRecording(false);
+        setLiveKeysPreview([]);
+        toast.info("បានបោះបង់ការបញ្ចូល Shortcut");
+        return;
+      }
+
+      // Ignore if user only pressed a modifier key by itself
+      const modifierKeys = ["Control", "Shift", "Alt", "Meta"];
+      if (modifierKeys.includes(e.key)) {
+        // Show live modifier preview
+        const tokens: string[] = [];
+        if (isMac) {
+          if (e.ctrlKey) tokens.push("Control");
+          if (e.altKey) tokens.push("Option");
+          if (e.shiftKey) tokens.push("Shift");
+          if (e.metaKey) tokens.push("Command");
+        } else {
+          if (e.ctrlKey) tokens.push("Ctrl");
+          if (e.altKey) tokens.push("Alt");
+          if (e.shiftKey) tokens.push("Shift");
+          if (e.metaKey) tokens.push("Win");
+        }
+        setLiveKeysPreview(tokens);
+        return;
+      }
+
+      // We have a valid primary key!
+      let primaryKey = e.key;
+      if (primaryKey.length === 1) {
+        primaryKey = primaryKey.toUpperCase();
+      }
+
+      const newConfig: AdminShortcutConfig = {
+        key: primaryKey,
+        ctrlKey: e.ctrlKey,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        metaKey: e.metaKey,
+        targetRoute: "/admin",
+      };
+
+      setRecordedShortcut(newConfig);
+      setIsRecording(false);
+      setLiveKeysPreview([]);
+      toast.success(
+        `បានជ្រើសរើស: ${formatShortcutKeyTokens(newConfig, isMac).join(" + ")} (សូមចុច «រក្សាទុក» ដើម្បីអនុវត្ត)`,
+      );
+    }
+
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, { capture: true });
+    };
+  }, [isRecording, isMac]);
+
+  // Save Shortcut
+  const handleSaveShortcut = async () => {
+    if (!recordedShortcut.key) {
+      toast.error("សូមបញ្ចូល Shortcut ឱ្យបានត្រឹមត្រូវ។");
+      return;
+    }
+
+    setIsSavingShortcut(true);
+    try {
+      // 1. Save to local storage & broadcast event
+      saveStoredAdminShortcut(recordedShortcut);
+      setSavedShortcut(recordedShortcut);
+
+      // 2. Sync to server API
+      await fetch("/api/admin/settings/shortcut", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(recordedShortcut),
+      });
+
+      toast.success("✅ Shortcut ត្រូវបានរក្សាទុក");
+    } catch {
+      toast.error("មានបញ្ហាក្នុងការរក្សាទុក Shortcut។");
+    } finally {
+      setIsSavingShortcut(false);
+    }
+  };
+
+  // Reset Shortcut to Default
+  const handleResetShortcut = async () => {
+    if (
+      !confirm(
+        `តើលោកអ្នកពិតជាចង់កំណត់ Shortcut ទៅជាទម្រង់ដើម (${formatShortcutKeyTokens(DEFAULT_ADMIN_SHORTCUT, isMac).join(" + ")}) វិញមែនឬទេ?`,
+      )
+    ) {
+      return;
+    }
+
+    setIsSavingShortcut(true);
+    try {
+      // 1. Reset in local storage & broadcast
+      resetStoredAdminShortcut();
+      setSavedShortcut(DEFAULT_ADMIN_SHORTCUT);
+      setRecordedShortcut(DEFAULT_ADMIN_SHORTCUT);
+
+      // 2. Reset on server API
+      await fetch("/api/admin/settings/shortcut/reset", { method: "POST" });
+
+      toast.success("✅ បានកំណត់ Shortcut ទៅជាទម្រង់ដើមវិញរួចរាល់។");
+    } catch {
+      toast.error("មានបញ្ហាក្នុងការកំណត់ Shortcut ឡើងវិញ។");
+    } finally {
+      setIsSavingShortcut(false);
+    }
+  };
+
+  // Password Change Handler
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -43,7 +199,7 @@ function AdminSettingsPage() {
       return;
     }
 
-    setIsSubmitting(true);
+    setIsSubmittingPassword(true);
     try {
       const res = await fetch("/api/admin/settings/password", {
         method: "PUT",
@@ -69,9 +225,11 @@ function AdminSettingsPage() {
     } catch {
       toast.error("មានបញ្ហាក្នុងការភ្ជាប់ទៅកាន់ប្រព័ន្ធ។");
     } finally {
-      setIsSubmitting(false);
+      setIsSubmittingPassword(false);
     }
   };
+
+  const isShortcutModified = JSON.stringify(recordedShortcut) !== JSON.stringify(savedShortcut);
 
   return (
     <AdminLayout>
@@ -79,11 +237,131 @@ function AdminSettingsPage() {
         <div>
           <h1 className="font-display text-2xl font-bold text-foreground">⚙️ ការកំណត់ប្រព័ន្ធ</h1>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            គ្រប់គ្រងព័ត៌មានផ្ទាល់ខ្លួន សុវត្ថិភាពគណនី និងពិនិត្យគោលការណ៍ RBAC។
+            គ្រប់គ្រងព័ត៌មានផ្ទាល់ខ្លួន សុវត្ថិភាពគណនី និងផ្លាស់ប្តូរគ្រាប់ចុចកាត់ Admin (Shortcut)។
           </p>
         </div>
 
-        {/* User Card */}
+        {/* 1. Admin Keyboard Shortcut Settings Card */}
+        <div
+          id="admin-shortcut-settings-card"
+          className="rounded-3xl border border-border/80 bg-card p-6 shadow-soft space-y-5"
+        >
+          <div className="space-y-1">
+            <h2 className="text-sm font-bold text-foreground flex items-center gap-2">
+              <Keyboard className="h-4 w-4 text-gold" /> 🔐 Admin Keyboard Shortcut
+            </h2>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              កំណត់ Shortcut សម្រាប់ចូលទៅកាន់ផ្ទាំងគ្រប់គ្រង Admin។ អ្នកអាចផ្លាស់ប្តូរ Shortcut
+              បានដោយមិនចាំបាច់កែ Code។
+            </p>
+          </div>
+
+          {/* Current & Recorded Shortcut Visual Display */}
+          <div className="rounded-2xl border border-border/70 bg-secondary/30 p-4 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <span className="text-xs font-semibold text-foreground">Shortcut បច្ចុប្បន្ន:</span>
+                <p className="text-[11px] text-muted-foreground">
+                  ចុចគ្រាប់ចុចនេះនៅលើទំព័រណាមួយដើម្បីចូលកាន់ Admin
+                </p>
+              </div>
+
+              {/* Styled Keycap Badges */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {formatShortcutKeyTokens(savedShortcut, isMac).map((token, idx) => (
+                  <span key={idx} className="flex items-center gap-1.5">
+                    <kbd className="inline-flex items-center justify-center min-w-[32px] h-8 px-2.5 rounded-xl border border-gold/40 bg-card text-foreground font-mono text-xs font-bold shadow-soft">
+                      {token}
+                    </kbd>
+                    {idx < formatShortcutKeyTokens(savedShortcut, isMac).length - 1 && (
+                      <span className="text-xs font-bold text-muted-foreground">+</span>
+                    )}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Recorder Active Banner */}
+            {isRecording ? (
+              <div className="mt-3 rounded-2xl border-2 border-dashed border-gold bg-gold/10 p-5 text-center space-y-2 animate-pulse">
+                <p className="text-xs font-bold text-gold flex items-center justify-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-ping inline-block" />
+                  កំពុងរង់ចាំការចុច Keyboard...
+                </p>
+                <p className="text-[11px] text-foreground">
+                  សូមចុចគ្រាប់ចុចនៅលើ Keyboard របស់លោកអ្នក (ឧ. Ctrl + Shift + M ឬ Alt + F9)
+                </p>
+                {liveKeysPreview.length > 0 && (
+                  <div className="flex items-center justify-center gap-1.5 pt-1">
+                    {liveKeysPreview.map((token, idx) => (
+                      <kbd
+                        key={idx}
+                        className="px-2 py-1 rounded-lg border border-gold bg-background text-xs font-mono font-bold"
+                      >
+                        {token}
+                      </kbd>
+                    ))}
+                    <span className="text-xs text-muted-foreground">+ ...</span>
+                  </div>
+                )}
+                <p className="text-[10px] text-muted-foreground pt-1">
+                  ចុច <kbd className="px-1.5 py-0.5 rounded bg-card border text-[10px]">Esc</kbd>{" "}
+                  ដើម្បីបោះបង់
+                </p>
+              </div>
+            ) : isShortcutModified ? (
+              <div className="mt-3 rounded-2xl border border-gold/50 bg-gold/10 p-3 flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-gold shrink-0" />
+                  <span>
+                    បានជ្រើសរើសថ្មី:{" "}
+                    <strong>{formatShortcutKeyTokens(recordedShortcut, isMac).join(" + ")}</strong>
+                  </span>
+                </div>
+                <span className="text-[11px] text-gold font-medium">មិនទាន់បានរក្សាទុក</span>
+              </div>
+            ) : null}
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex flex-wrap items-center gap-2.5 pt-1">
+            <Button
+              type="button"
+              onClick={() => setIsRecording(true)}
+              variant={isRecording ? "secondary" : "outline"}
+              className="rounded-full text-xs font-semibold h-9 px-4"
+              disabled={isRecording}
+            >
+              <Keyboard className="mr-1.5 h-3.5 w-3.5 text-gold" />
+              {isRecording ? "កំពុងបញ្ចូល..." : "⌨️ ចុចបញ្ចូល Shortcut"}
+            </Button>
+
+            {isShortcutModified && (
+              <Button
+                type="button"
+                onClick={handleSaveShortcut}
+                disabled={isSavingShortcut}
+                className="rounded-full bg-gold text-primary-foreground hover:bg-gold/90 text-xs font-semibold h-9 px-4 shadow-soft"
+              >
+                <Save className="mr-1.5 h-3.5 w-3.5" />
+                {isSavingShortcut ? "កំពុងរក្សាទុក..." : "💾 រក្សាទុក"}
+              </Button>
+            )}
+
+            <Button
+              type="button"
+              onClick={handleResetShortcut}
+              disabled={isSavingShortcut}
+              variant="ghost"
+              className="rounded-full text-xs text-muted-foreground hover:text-foreground h-9 px-3"
+            >
+              <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+              ↩️ កំណត់ទៅ Shortcut ដើម
+            </Button>
+          </div>
+        </div>
+
+        {/* 2. User Profile Card */}
         <div
           id="admin-profile-card"
           className="rounded-3xl border border-border/80 bg-card p-6 shadow-soft space-y-4"
@@ -117,7 +395,7 @@ function AdminSettingsPage() {
           </div>
         </div>
 
-        {/* Change Password Form */}
+        {/* 3. Change Password Form */}
         <div
           id="change-password-card"
           className="rounded-3xl border border-border/80 bg-card p-6 shadow-soft space-y-4"
@@ -185,15 +463,15 @@ function AdminSettingsPage() {
             <Button
               id="change-password-submit-btn"
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmittingPassword}
               className="rounded-full bg-gold text-primary-foreground hover:bg-gold/90 font-medium"
             >
-              {isSubmitting ? "កំពុងរក្សាទុក..." : "ផ្លាស់ប្តូរពាក្យសម្ងាត់"}
+              {isSubmittingPassword ? "កំពុងរក្សាទុក..." : "ផ្លាស់ប្តូរពាក្យសម្ងាត់"}
             </Button>
           </form>
         </div>
 
-        {/* Security Architecture Info */}
+        {/* 4. Security Architecture Info */}
         <div
           id="security-architecture-card"
           className="rounded-3xl border border-border/80 bg-card p-6 shadow-soft space-y-4"

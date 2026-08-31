@@ -7,8 +7,11 @@ import {
   fetchAlbumPhotos,
   fetchArchiveStats,
   fetchSearchResults,
+  fetchArchiveImages,
   type ApiPhoto,
   type ApiArchiveStats,
+  type PaginatedImagesResponse,
+  type ArchiveImageParams,
 } from "@/lib/api-archive";
 import type { Festival, Album } from "@/data/archive";
 
@@ -28,7 +31,11 @@ export function useYears() {
   });
 }
 
-export function useAlbums(filters?: { year?: number; festivalId?: string; search?: string }) {
+export function useAlbums(filters?: {
+  year?: number | undefined;
+  festivalId?: string | undefined;
+  search?: string | undefined;
+}) {
   return useQuery<Album[]>({
     queryKey: ["archive", "albums", filters?.year, filters?.festivalId, filters?.search],
     queryFn: () => fetchAlbums(filters),
@@ -51,6 +58,23 @@ export function useAlbumPhotos(albumId: string) {
     queryFn: () => fetchAlbumPhotos(albumId),
     enabled: !!albumId,
     staleTime: 1000 * 60 * 5,
+  });
+}
+
+export function useArchiveImages(params?: ArchiveImageParams) {
+  return useQuery<PaginatedImagesResponse>({
+    queryKey: [
+      "archive",
+      "images",
+      params?.year,
+      params?.festivalId,
+      params?.albumId,
+      params?.search,
+      params?.page,
+      params?.limit,
+    ],
+    queryFn: () => fetchArchiveImages(params),
+    staleTime: 1000 * 60 * 2,
   });
 }
 

@@ -14,6 +14,7 @@ import { Route as AlbumsRouteImport } from './routes/albums'
 import { Route as DeveloperRouteImport } from './routes/developer'
 import { Route as FavoritesRouteImport } from './routes/favorites'
 import { Route as FestivalsRouteImport } from './routes/festivals'
+import { Route as ImagesRouteImport } from './routes/images'
 import { Route as SearchRouteImport } from './routes/search'
 import { Route as YearsRouteImport } from './routes/years'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
@@ -22,6 +23,7 @@ import { Route as AdminAlbumsRouteImport } from './routes/admin/albums'
 import { Route as AdminAnalyticsRouteImport } from './routes/admin/analytics'
 import { Route as AdminEditorsRouteImport } from './routes/admin/editors'
 import { Route as AdminFestivalsRouteImport } from './routes/admin/festivals'
+import { Route as AdminImageGalleryRouteImport } from './routes/admin/image-gallery'
 import { Route as AdminImagesRouteImport } from './routes/admin/images'
 import { Route as AdminLoginRouteImport } from './routes/admin/login'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
@@ -52,6 +54,11 @@ const FavoritesRoute = FavoritesRouteImport.update({
 const FestivalsRoute = FestivalsRouteImport.update({
   id: '/festivals',
   path: '/festivals',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ImagesRoute = ImagesRouteImport.update({
+  id: '/images',
+  path: '/images',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SearchRoute = SearchRouteImport.update({
@@ -94,6 +101,11 @@ const AdminFestivalsRoute = AdminFestivalsRouteImport.update({
   path: '/admin/festivals',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminImageGalleryRoute = AdminImageGalleryRouteImport.update({
+  id: '/admin/image-gallery',
+  path: '/admin/image-gallery',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminImagesRoute = AdminImagesRouteImport.update({
   id: '/admin/images',
   path: '/admin/images',
@@ -131,6 +143,7 @@ export interface FileRoutesByFullPath {
   '/developer': typeof DeveloperRoute
   '/favorites': typeof FavoritesRoute
   '/festivals': typeof FestivalsRoute
+  '/images': typeof ImagesRoute
   '/search': typeof SearchRoute
   '/years': typeof YearsRoute
   '/admin/activity-logs': typeof AdminActivityLogsRoute
@@ -138,6 +151,7 @@ export interface FileRoutesByFullPath {
   '/admin/analytics': typeof AdminAnalyticsRoute
   '/admin/editors': typeof AdminEditorsRoute
   '/admin/festivals': typeof AdminFestivalsRoute
+  '/admin/image-gallery': typeof AdminImageGalleryRoute
   '/admin/images': typeof AdminImagesRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/settings': typeof AdminSettingsRoute
@@ -152,6 +166,7 @@ export interface FileRoutesByTo {
   '/developer': typeof DeveloperRoute
   '/favorites': typeof FavoritesRoute
   '/festivals': typeof FestivalsRoute
+  '/images': typeof ImagesRoute
   '/search': typeof SearchRoute
   '/years': typeof YearsRoute
   '/admin/activity-logs': typeof AdminActivityLogsRoute
@@ -159,6 +174,7 @@ export interface FileRoutesByTo {
   '/admin/analytics': typeof AdminAnalyticsRoute
   '/admin/editors': typeof AdminEditorsRoute
   '/admin/festivals': typeof AdminFestivalsRoute
+  '/admin/image-gallery': typeof AdminImageGalleryRoute
   '/admin/images': typeof AdminImagesRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/settings': typeof AdminSettingsRoute
@@ -174,6 +190,7 @@ export interface FileRoutesById {
   '/developer': typeof DeveloperRoute
   '/favorites': typeof FavoritesRoute
   '/festivals': typeof FestivalsRoute
+  '/images': typeof ImagesRoute
   '/search': typeof SearchRoute
   '/years': typeof YearsRoute
   '/admin/activity-logs': typeof AdminActivityLogsRoute
@@ -181,6 +198,7 @@ export interface FileRoutesById {
   '/admin/analytics': typeof AdminAnalyticsRoute
   '/admin/editors': typeof AdminEditorsRoute
   '/admin/festivals': typeof AdminFestivalsRoute
+  '/admin/image-gallery': typeof AdminImageGalleryRoute
   '/admin/images': typeof AdminImagesRoute
   '/admin/login': typeof AdminLoginRoute
   '/admin/settings': typeof AdminSettingsRoute
@@ -197,6 +215,7 @@ export interface FileRouteTypes {
     | '/developer'
     | '/favorites'
     | '/festivals'
+    | '/images'
     | '/search'
     | '/years'
     | '/admin/activity-logs'
@@ -204,6 +223,7 @@ export interface FileRouteTypes {
     | '/admin/analytics'
     | '/admin/editors'
     | '/admin/festivals'
+    | '/admin/image-gallery'
     | '/admin/images'
     | '/admin/login'
     | '/admin/settings'
@@ -218,6 +238,7 @@ export interface FileRouteTypes {
     | '/developer'
     | '/favorites'
     | '/festivals'
+    | '/images'
     | '/search'
     | '/years'
     | '/admin/activity-logs'
@@ -225,6 +246,7 @@ export interface FileRouteTypes {
     | '/admin/analytics'
     | '/admin/editors'
     | '/admin/festivals'
+    | '/admin/image-gallery'
     | '/admin/images'
     | '/admin/login'
     | '/admin/settings'
@@ -239,6 +261,7 @@ export interface FileRouteTypes {
     | '/developer'
     | '/favorites'
     | '/festivals'
+    | '/images'
     | '/search'
     | '/years'
     | '/admin/activity-logs'
@@ -246,6 +269,7 @@ export interface FileRouteTypes {
     | '/admin/analytics'
     | '/admin/editors'
     | '/admin/festivals'
+    | '/admin/image-gallery'
     | '/admin/images'
     | '/admin/login'
     | '/admin/settings'
@@ -261,6 +285,7 @@ export interface RootRouteChildren {
   DeveloperRoute: typeof DeveloperRoute
   FavoritesRoute: typeof FavoritesRoute
   FestivalsRoute: typeof FestivalsRoute
+  ImagesRoute: typeof ImagesRoute
   SearchRoute: typeof SearchRoute
   YearsRoute: typeof YearsRoute
   AdminActivityLogsRoute: typeof AdminActivityLogsRoute
@@ -268,6 +293,7 @@ export interface RootRouteChildren {
   AdminAnalyticsRoute: typeof AdminAnalyticsRoute
   AdminEditorsRoute: typeof AdminEditorsRoute
   AdminFestivalsRoute: typeof AdminFestivalsRoute
+  AdminImageGalleryRoute: typeof AdminImageGalleryRoute
   AdminImagesRoute: typeof AdminImagesRoute
   AdminLoginRoute: typeof AdminLoginRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
@@ -312,6 +338,13 @@ declare module '@tanstack/react-router' {
       path: '/festivals'
       fullPath: '/festivals'
       preLoaderRoute: typeof FestivalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/images': {
+      id: '/images'
+      path: '/images'
+      fullPath: '/images'
+      preLoaderRoute: typeof ImagesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/search': {
@@ -370,6 +403,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminFestivalsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/image-gallery': {
+      id: '/admin/image-gallery'
+      path: '/admin/image-gallery'
+      fullPath: '/admin/image-gallery'
+      preLoaderRoute: typeof AdminImageGalleryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/images': {
       id: '/admin/images'
       path: '/admin/images'
@@ -421,6 +461,7 @@ const rootRouteChildren: RootRouteChildren = {
   DeveloperRoute: DeveloperRoute,
   FavoritesRoute: FavoritesRoute,
   FestivalsRoute: FestivalsRoute,
+  ImagesRoute: ImagesRoute,
   SearchRoute: SearchRoute,
   YearsRoute: YearsRoute,
   AdminActivityLogsRoute: AdminActivityLogsRoute,
@@ -428,6 +469,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminAnalyticsRoute: AdminAnalyticsRoute,
   AdminEditorsRoute: AdminEditorsRoute,
   AdminFestivalsRoute: AdminFestivalsRoute,
+  AdminImageGalleryRoute: AdminImageGalleryRoute,
   AdminImagesRoute: AdminImagesRoute,
   AdminLoginRoute: AdminLoginRoute,
   AdminSettingsRoute: AdminSettingsRoute,

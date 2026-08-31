@@ -1,14 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { festivals, getAllFestivals, years, toKhmerNumber, type Festival } from "@/data/archive";
+import {
+  festivals as defaultFestivals,
+  years as defaultYears,
+  toKhmerNumber,
+} from "@/data/archive";
 import { cn } from "@/lib/utils";
-import { Upload, X, Rocket, ImagePlus } from "lucide-react";
+import { Upload, X, Rocket, ImagePlus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { useUploadImage, useCreateAlbum } from "@/hooks/useAdminData";
+import { useAlbums, useFestivals, useYears } from "@/hooks/useArchiveData";
 
 const MAX = 50;
 
@@ -19,26 +25,23 @@ export function UploadModal({
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
-  const [availableFestivals, setAvailableFestivals] = useState<Festival[]>(festivals);
-  const [year, setYear] = useState<number>(years[0]!);
-  const [festivalId, setFestivalId] = useState<string>(festivals[0]!.id);
-  const [files, setFiles] = useState<{ id: string; url: string; name: string }[]>([]);
+  const { data: dbYears = defaultYears } = useYears();
+  const { data: dbFestivals = defaultFestivals } = useFestivals();
+  const { data: allAlbums = [] } = useAlbums();
+
+  const [year, setYear] = useState<number>(dbYears[0] || 2027);
+  const [festivalId, setFestivalId] = useState<string>(dbFestivals[0]?.id || "chaul-chnam");
+  const [files, setFiles] = useState<{ id: string; file: File; url: string; name: string }[]>([]);
   const [location, setLocation] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
 
-  useEffect(() => {
-    setAvailableFestivals(getAllFestivals());
-    const handleUpdate = () => setAvailableFestivals(getAllFestivals());
-    window.addEventListener("watpeareang-festivals-updated", handleUpdate);
-    return () => window.removeEventListener("watpeareang-festivals-updated", handleUpdate);
-  }, []);
+  const uploadImageMutation = useUploadImage();
+  const createAlbumMutation = useCreateAlbum();
 
-  const festival = useMemo(
-    () =>
-      availableFestivals.find((f) => f.id === festivalId) ?? availableFestivals[0] ?? festivals[0]!,
-    [availableFestivals, festivalId],
-  );
+  const festival =
+    dbFestivals.find((f) => f.id === festivalId) ?? dbFestivals[0] ?? defaultFestivals[0]!;
 
   function addFiles(list: FileList | null) {
     if (!list) return;
@@ -46,21 +49,78 @@ export function UploadModal({
       .slice(0, MAX - files.length)
       .map((file, i) => ({
         id: `${file.name}-${Date.now()}-${i}`,
+        file,
         url: URL.createObjectURL(file),
         name: file.name,
       }));
     setFiles((prev) => [...prev, ...next].slice(0, MAX));
   }
 
-  function publish() {
-    toast.success("បង្ហោះ Album ដោយជោគជ័យ", {
-      description: `${festival.name} · ឆ្នាំ ${toKhmerNumber(year)} · ${toKhmerNumber(files.length)} រូបភាព`,
-    });
-    onOpenChange(false);
-    setFiles([]);
-    setTitle("");
-    setLocation("");
-    setDescription("");
+  async function publish() {
+    if (files.length === 0) return;
+    setIsUploading(true);
+
+    try {
+      // 1. Locate or create target album
+      const targetAlbum = allAlbums.find(
+        (a) =>
+          (a.festivalId === festivalId || a.id.startsWith(festivalId)) &&
+          Number(a.year) === Number(year),
+      );
+
+      const finalAlbumId: string = targetAlbum?.id || `${festivalId}-${year}`;
+      if (!targetAlbum?.id) {
+        const albumTitle = title.trim() || `${festival.name} ឆ្នាំ ${year}`;
+        await createAlbumMutation.mutateAsync({
+          festivalId,
+          year,
+          title: albumTitle,
+          location: location.trim() || "វត្តពារាំង",
+          description: description.trim() || undefined,
+        });
+      }
+
+      let successCount = 0;
+      for (const item of files) {
+        try {
+          const itemTitle = item.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
+          const formData = new FormData();
+          formData.append("file", item.file);
+          formData.append("albumId", finalAlbumId);
+          formData.append("title", title.trim() ? `${title.trim()} (${itemTitle})` : itemTitle);
+          if (location.trim()) {
+            formData.append("photographer", location.trim());
+          }
+          if (description.trim()) {
+            formData.append("tags", description.trim());
+          }
+
+          await uploadImageMutation.mutateAsync(formData);
+          successCount++;
+        } catch (err: unknown) {
+          console.error("Upload error:", err);
+          const msg = err instanceof Error ? err.message : "បរាជ័យ";
+          toast.error(`មិនអាច Upload «${item.name}»: ${msg}`);
+        }
+      }
+
+      if (successCount > 0) {
+        toast.success(`បានបង្ហោះ Album «${festival.name}» ដោយជោគជ័យ!`, {
+          description: `ឆ្នាំ ${toKhmerNumber(year)} · ${toKhmerNumber(successCount)} រូបភាពបានរក្សាទុកក្នុង Cloudflare R2`,
+        });
+        files.forEach((f) => URL.revokeObjectURL(f.url));
+        setFiles([]);
+        setTitle("");
+        setLocation("");
+        setDescription("");
+        onOpenChange(false);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការបង្ហោះ";
+      toast.error(msg);
+    } finally {
+      setIsUploading(false);
+    }
   }
 
   return (
@@ -73,31 +133,58 @@ export function UploadModal({
         </div>
 
         <div className="space-y-7 px-6 py-6">
+          {/* Selected Destination Summary Card */}
+          <div className="rounded-2xl border border-gold/30 bg-gold/5 p-4 text-xs">
+            <div className="font-semibold text-gold mb-1 flex items-center gap-1.5">
+              <span>📍 គោលដៅរក្សាទុកក្នុងទិន្នន័យ៖</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-foreground">
+              <div>
+                📅 ឆ្នាំ៖{" "}
+                <span className="font-bold text-gold">
+                  {year} ({toKhmerNumber(year)})
+                </span>
+              </div>
+              <div>
+                🏮 ពិធីបុណ្យ៖{" "}
+                <span className="font-bold text-gold">
+                  {festival.emoji} {festival.name}
+                </span>
+              </div>
+              <div>
+                📁 Album គោលដៅ៖{" "}
+                <span className="font-bold text-gold">
+                  {title.trim() || `${festival.name} ឆ្នាំ ${year}`}
+                </span>
+              </div>
+            </div>
+          </div>
+
           <section className="space-y-3">
-            <Label>ជំហាន ១ · ជ្រើសរើសឆ្នាំ</Label>
+            <Label>ជំហាន ១ · ជ្រើសរើសឆ្នាំប្រារព្ធ</Label>
             <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
-              {years.map((y) => (
+              {dbYears.map((y) => (
                 <button
                   key={y}
                   type="button"
                   onClick={() => setYear(y)}
                   className={cn(
-                    "shrink-0 rounded-full border px-4 py-2 text-sm transition-colors",
+                    "shrink-0 rounded-full border px-4 py-2 text-sm transition-colors font-medium",
                     y === year
-                      ? "border-transparent bg-gold text-gold-foreground"
+                      ? "border-transparent bg-gold text-gold-foreground shadow-sm"
                       : "border-border bg-card hover:bg-secondary",
                   )}
                 >
-                  {toKhmerNumber(y)}
+                  {y} ({toKhmerNumber(y)})
                 </button>
               ))}
             </div>
           </section>
 
           <section className="space-y-3">
-            <Label>ជំហាន ២ · ជ្រើសរើសបុណ្យ</Label>
-            <div className="grid max-h-44 overflow-y-auto gap-2 sm:grid-cols-2">
-              {availableFestivals.map((f) => (
+            <Label>ជំហាន ២ · ជ្រើសរើសពិធីបុណ្យ</Label>
+            <div className="grid max-h-48 overflow-y-auto gap-2 sm:grid-cols-2">
+              {dbFestivals.map((f) => (
                 <button
                   key={f.id}
                   type="button"
@@ -105,7 +192,9 @@ export function UploadModal({
                   style={f.id === festivalId ? { borderColor: f.accent } : undefined}
                   className={cn(
                     "flex items-center gap-3 rounded-2xl border px-4 py-3 text-left text-sm transition-colors",
-                    f.id === festivalId ? "bg-secondary" : "border-border hover:bg-secondary/60",
+                    f.id === festivalId
+                      ? "bg-secondary font-semibold"
+                      : "border-border hover:bg-secondary/60",
                   )}
                 >
                   <span className="text-lg">{f.emoji}</span>
@@ -186,11 +275,19 @@ export function UploadModal({
 
           <Button
             size="lg"
-            className="w-full rounded-full"
-            disabled={files.length === 0}
+            className="w-full rounded-full bg-gold text-primary-foreground hover:bg-gold/90"
+            disabled={files.length === 0 || isUploading}
             onClick={publish}
           >
-            <Rocket className="mr-1 h-4 w-4" /> បង្ហោះ Album
+            {isUploading ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> កំពុង Upload ចូល Cloudflare R2...
+              </>
+            ) : (
+              <>
+                <Rocket className="mr-1 h-4 w-4" /> បង្ហោះ Album
+              </>
+            )}
           </Button>
         </div>
       </DialogContent>

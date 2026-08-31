@@ -55,7 +55,12 @@ export function resolveImageUrl(url?: string | null, festivalId?: string): strin
   }
 
   // Uploaded permanent assets or remote CDN URLs
-  if (url.startsWith("/uploads/") || url.startsWith("http://") || url.startsWith("https://")) {
+  if (
+    url.startsWith("/uploads/") ||
+    url.startsWith("/api/storage/") ||
+    url.startsWith("http://") ||
+    url.startsWith("https://")
+  ) {
     return url;
   }
 

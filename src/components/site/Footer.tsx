@@ -108,11 +108,6 @@ export function Footer() {
                     អ្នកអភិវឌ្ឍន៍
                   </Link>
                 </li>
-                <li>
-                  <Link to="/admin/login" className="transition-colors hover:text-gold">
-                    ចូលគ្រប់គ្រង
-                  </Link>
-                </li>
               </ul>
             </div>
           </div>

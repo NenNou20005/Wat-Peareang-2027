@@ -378,6 +378,29 @@ function AdminAlbumsPage() {
               </DialogTitle>
             </DialogHeader>
 
+            {/* Destination Summary Banner */}
+            <div className="rounded-2xl border border-gold/30 bg-gold/5 p-3.5 text-xs shadow-sm">
+              <div className="font-semibold text-gold mb-1 flex items-center gap-1.5">
+                <span>📍 គោលដៅបង្កើត Album ក្នុងទិន្នន័យ (PostgreSQL Record)៖</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-foreground font-medium">
+                <div>
+                  📅 ឆ្នាំ៖{" "}
+                  <span className="font-bold text-gold">
+                    {formYear || (years[0] ?? 2027)} (
+                    {toKhmerNumber(formYear || (years[0] ?? 2027))})
+                  </span>
+                </div>
+                <div>
+                  🏮 ពិធីបុណ្យ៖{" "}
+                  <span className="font-bold text-gold">
+                    {festivals.find((f) => f.id === (formFestId || festivals[0]?.id))?.name ||
+                      "បុណ្យ"}
+                  </span>
+                </div>
+              </div>
+            </div>
+
             <form onSubmit={handleAddAlbum} className="mt-4 space-y-4">
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">ជ្រើសរើសពិធីបុណ្យ</Label>

@@ -186,6 +186,16 @@ interface DatabaseSchema {
   viewsLog?: StoredViewLog[] | undefined;
   likes?: StoredLike[] | undefined;
   favorites?: StoredFavorite[] | undefined;
+  adminShortcut?:
+    | {
+        key: string;
+        ctrlKey?: boolean;
+        altKey?: boolean;
+        shiftKey?: boolean;
+        metaKey?: boolean;
+        targetRoute?: string;
+      }
+    | undefined;
 }
 
 const DATA_DIR = path.join(process.cwd(), ".data");
@@ -871,6 +881,38 @@ class Database {
           .catch(() => {});
       }
     }
+  }
+  public getAdminShortcut(): {
+    key: string;
+    ctrlKey?: boolean;
+    altKey?: boolean;
+    shiftKey?: boolean;
+    metaKey?: boolean;
+    targetRoute?: string;
+  } {
+    return (
+      this.data.adminShortcut || {
+        key: "A",
+        ctrlKey: true,
+        shiftKey: true,
+        altKey: false,
+        metaKey: false,
+        targetRoute: "/admin",
+      }
+    );
+  }
+
+  public setAdminShortcut(shortcut: {
+    key: string;
+    ctrlKey?: boolean;
+    altKey?: boolean;
+    shiftKey?: boolean;
+    metaKey?: boolean;
+    targetRoute?: string;
+  }) {
+    this.data.adminShortcut = shortcut;
+    this.save();
+    return shortcut;
   }
 
   // --- SESSIONS ---

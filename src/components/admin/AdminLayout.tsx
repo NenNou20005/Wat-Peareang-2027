@@ -8,6 +8,8 @@ import {
   Calendar,
   FolderKanban,
   Image as ImageIcon,
+  Images,
+  Upload,
   Users,
   ScrollText,
   Trash2,
@@ -54,8 +56,14 @@ const adminNav: NavItem[] = [
   },
   {
     to: "/admin/images",
-    label: "រូបភាព & Upload",
-    icon: ImageIcon,
+    label: "គ្រប់គ្រងរូបភាព & Upload",
+    icon: Upload,
+    requiredPermission: "view_images",
+  },
+  {
+    to: "/admin/image-gallery",
+    label: "វិចិត្រសាលរូបភាព",
+    icon: Images,
     requiredPermission: "view_images",
   },
   {

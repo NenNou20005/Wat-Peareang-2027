@@ -73,6 +73,27 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     return new Response("Not Found", { status: 404 });
   }
 
+  // Handle Cloudflare R2 served images proxy fallback
+  if (pathname.startsWith("/api/storage/r2/") && method === "GET") {
+    const rawKey = pathname.replace("/api/storage/r2/", "");
+    const key = decodeURIComponent(rawKey);
+    const storage = getStorageProvider();
+    if (storage.getObject) {
+      const obj = await storage.getObject(key);
+      if (obj) {
+        return new Response(Buffer.from(obj.body), {
+          status: 200,
+          headers: {
+            "Content-Type": obj.contentType,
+            "Content-Length": String(obj.contentLength),
+            "Cache-Control": "public, max-age=31536000, immutable",
+          },
+        });
+      }
+    }
+    return new Response("Not Found", { status: 404 });
+  }
+
   if (!pathname.startsWith("/api/")) {
     return null;
   }
@@ -896,7 +917,8 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       try {
         const body = await request.json();
         const { festivalId, year, location, title, description, coverImage } = body;
-        if (!festivalId || !year || !title) {
+        const numYear = Number(year);
+        if (!festivalId || !numYear || isNaN(numYear) || !title || !title.trim()) {
           return json(
             {
               success: false,
@@ -905,23 +927,98 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
             400,
           );
         }
-        const newAlbum = {
-          id: `${festivalId}-${year}-${Date.now()}`,
-          festivalId,
-          year: Number(year),
-          location: location || "វត្តពារាំង",
-          title: title.trim(),
-          description: description || undefined,
-          coverImage: coverImage || undefined,
-          photoCount: 0,
-          status: "published",
-          createdAt: new Date().toISOString(),
-        };
-        const result = db.addAlbum(newAlbum, currentUser);
-        if (!result.success) return json({ success: false, error: result.error }, 400);
-        return json({ success: true, data: newAlbum }, 201);
-      } catch {
-        return json({ success: false, error: "ទិន្នន័យមិនត្រឹមត្រូវ។" }, 400);
+
+        const drizzle = getDrizzleDb();
+        if (drizzle) {
+          // Verify festival exists
+          const [fest] = await drizzle
+            .select()
+            .from(schema.festivals)
+            .where(eq(schema.festivals.id, festivalId))
+            .limit(1);
+
+          if (!fest) {
+            return json(
+              { success: false, error: `រកមិនឃើញពិធីបុណ្យកូដ «${festivalId}» ក្នុងទិន្នន័យឡើយ។` },
+              400,
+            );
+          }
+
+          // Ensure year exists in schema.years
+          await drizzle.insert(schema.years).values({ year: numYear }).onConflictDoNothing();
+
+          // Standard canonical album ID
+          let candidateId = `${festivalId}-${numYear}`;
+          const [existingAlbum] = await drizzle
+            .select()
+            .from(schema.albums)
+            .where(eq(schema.albums.id, candidateId))
+            .limit(1);
+
+          if (existingAlbum) {
+            candidateId = `${festivalId}-${numYear}-${Date.now().toString(36)}`;
+          }
+
+          const albumRecord = {
+            id: candidateId,
+            festivalId,
+            year: numYear,
+            title: title.trim(),
+            location: (location && location.trim()) || "វត្តពារាំង",
+            description: (description && description.trim()) || null,
+            coverImage: (coverImage && coverImage.trim()) || fest.coverUrl || null,
+            photoCount: 0,
+            status: "published",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+
+          await drizzle.insert(schema.albums).values(albumRecord);
+
+          db.logActivity({
+            userId: currentUser.id,
+            userName: currentUser.name,
+            userRole: currentUser.role,
+            action: "ADD_ALBUM",
+            resource: "ALBUM",
+            resourceId: candidateId,
+            details: `បានបង្កើត Album «${albumRecord.title}» ឆ្នាំ ${albumRecord.year}`,
+            ip,
+          });
+
+          return json(
+            {
+              success: true,
+              data: {
+                ...albumRecord,
+                createdAt: albumRecord.createdAt.toISOString(),
+                updatedAt: albumRecord.updatedAt.toISOString(),
+              },
+            },
+            201,
+          );
+        } else {
+          // In-memory fallback
+          const newAlbum = {
+            id: `${festivalId}-${numYear}`,
+            festivalId,
+            year: numYear,
+            location: location || "វត្តពារាំង",
+            title: title.trim(),
+            description: description || undefined,
+            coverImage: coverImage || undefined,
+            photoCount: 0,
+            status: "published",
+            createdAt: new Date().toISOString(),
+          };
+          const result = db.addAlbum(newAlbum, currentUser);
+          if (!result.success) return json({ success: false, error: result.error }, 400);
+          return json({ success: true, data: newAlbum }, 201);
+        }
+      } catch (err: unknown) {
+        logger.error("Failed to create album in PostgreSQL", { error: err });
+        const msg = err instanceof Error ? err.message : "ទិន្នន័យមិនត្រឹមត្រូវ។";
+        return json({ success: false, error: msg }, 400);
       }
     }
 
@@ -1105,6 +1202,16 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
               status: newImage.status,
               uploadedBy: currentUser.id,
             });
+
+            // Increment album photoCount in PostgreSQL
+            await drizzle
+              .update(schema.albums)
+              .set({
+                photoCount: sql`${schema.albums.photoCount} + 1`,
+                updatedAt: new Date(),
+              })
+              .where(eq(schema.albums.id, newImage.albumId))
+              .catch(() => {});
           }
           db.addImage(newImage, currentUser);
 
@@ -1496,6 +1603,98 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     }
   }
 
+  // --- ADMIN SETTINGS: KEYBOARD SHORTCUT ---
+  if (pathname === "/api/admin/settings/shortcut" && method === "GET") {
+    const auth = await requireAuth(request);
+    if (auth instanceof Response) return auth;
+    return json({ success: true, data: db.getAdminShortcut() });
+  }
+
+  if (pathname === "/api/admin/settings/shortcut" && (method === "PUT" || method === "POST")) {
+    const auth = await requireAuth(request);
+    if (auth instanceof Response) return auth;
+    const currentUser = auth.user;
+
+    try {
+      const body = await request.json();
+      const key = typeof body.key === "string" ? body.key.trim() : "";
+      if (!key) {
+        return json({ success: false, error: "សូមបញ្ចូល Key ត្រឹមត្រូវសម្រាប់ Shortcut។" }, 400);
+      }
+
+      const shortcut = {
+        key: key.toUpperCase(),
+        ctrlKey: Boolean(body.ctrlKey),
+        altKey: Boolean(body.altKey),
+        shiftKey: Boolean(body.shiftKey),
+        metaKey: Boolean(body.metaKey),
+        targetRoute: "/admin",
+      };
+
+      db.setAdminShortcut(shortcut);
+
+      db.logActivity({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        userRole: currentUser.role,
+        action: "UPDATE_SHORTCUT",
+        resource: "SETTINGS",
+        resourceId: "admin-shortcut",
+        details: `បានកែសម្រួល Admin Shortcut: ${shortcut.key} (Ctrl: ${shortcut.ctrlKey}, Shift: ${shortcut.shiftKey}, Alt: ${shortcut.altKey}, Meta: ${shortcut.metaKey})`,
+        ip,
+      });
+
+      return json({
+        success: true,
+        message: "Shortcut ត្រូវបានរក្សាទុកដោយជោគជ័យ!",
+        data: shortcut,
+      });
+    } catch {
+      return json({ success: false, error: "ទិន្នន័យមិនត្រឹមត្រូវ។" }, 400);
+    }
+  }
+
+  if (
+    pathname === "/api/admin/settings/shortcut/reset" &&
+    (method === "POST" || method === "PUT")
+  ) {
+    const auth = await requireAuth(request);
+    if (auth instanceof Response) return auth;
+    const currentUser = auth.user;
+
+    const defaultShortcut = {
+      key: "A",
+      ctrlKey: true,
+      shiftKey: true,
+      altKey: false,
+      metaKey: false,
+      targetRoute: "/admin",
+    };
+
+    db.setAdminShortcut(defaultShortcut);
+
+    db.logActivity({
+      userId: currentUser.id,
+      userName: currentUser.name,
+      userRole: currentUser.role,
+      action: "RESET_SHORTCUT",
+      resource: "SETTINGS",
+      resourceId: "admin-shortcut",
+      details: "បានកំណត់ Admin Shortcut ទៅជា Default (Ctrl + Shift + A)",
+      ip,
+    });
+
+    return json({
+      success: true,
+      message: "បានកំណត់ Shortcut ទៅជាទម្រង់ដើមវិញរួចរាល់។",
+      data: defaultShortcut,
+    });
+  }
+
+  if (pathname === "/api/archive/admin-shortcut" && method === "GET") {
+    return json({ success: true, data: db.getAdminShortcut() });
+  }
+
   // --- 11. SYSTEM & DATABASE STATUS ENDPOINTS (SUPER ADMIN) ---
   if (pathname === "/api/admin/system/database-status" && method === "GET") {
     const authResult = await requireSuperAdmin(request);
@@ -1629,6 +1828,44 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       return json({ success: true, data: stats });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to fetch archive stats";
+      return json({ success: false, error: msg }, 500);
+    }
+  }
+
+  // GET /api/archive/images (Public Image Gallery Paginated & Filtered by Year/Festival/Search)
+  if (pathname === "/api/archive/images" && method === "GET") {
+    try {
+      const yearParam = url.searchParams.get("year");
+      const festivalIdParam = url.searchParams.get("festivalId") || undefined;
+      const albumIdParam = url.searchParams.get("albumId") || undefined;
+      const searchParam = url.searchParams.get("search") || undefined;
+      const pageParam = url.searchParams.get("page");
+      const limitParam = url.searchParams.get("limit");
+
+      const year = yearParam && yearParam !== "all" ? parseInt(yearParam, 10) : undefined;
+      const page = pageParam ? Math.max(1, parseInt(pageParam, 10) || 1) : 1;
+      const limit = limitParam ? Math.min(100, Math.max(1, parseInt(limitParam, 10) || 24)) : 24;
+
+      const result = await getAdminImagesPaginated({
+        page,
+        limit,
+        year: isNaN(year as number) ? undefined : year,
+        festivalId: festivalIdParam === "all" ? undefined : festivalIdParam,
+        albumId: albumIdParam === "all" ? undefined : albumIdParam,
+        search: searchParam,
+        status: "published",
+      });
+
+      return json({
+        success: true,
+        data: result.images,
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to fetch archive images";
       return json({ success: false, error: msg }, 500);
     }
   }

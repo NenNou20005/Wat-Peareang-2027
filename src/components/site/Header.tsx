@@ -16,6 +16,7 @@ import { useAuth } from "@/hooks/useAuth";
 
 const nav = [
   { to: "/", label: "🏠 ទំព័រដើម" },
+  { to: "/images", label: "📸 រូបភាព" },
   { to: "/albums", label: "🖼️ Albums" },
   { to: "/years", label: "📅 តាមឆ្នាំ" },
   { to: "/festivals", label: "🎉 តាមបុណ្យ" },
@@ -130,18 +131,7 @@ export function Header() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-          ) : (
-            <Button
-              variant="ghost"
-              className="rounded-full text-muted-foreground hover:text-foreground"
-              size="icon"
-              aria-label="ចូលគណនីគ្រប់គ្រង"
-              onClick={() => navigate({ to: "/admin/login" })}
-              title="ចូលគណនីគ្រប់គ្រង"
-            >
-              <User className="h-4 w-4" />
-            </Button>
-          )}
+          ) : null}
 
           <Sheet>
             <SheetTrigger asChild>
@@ -173,19 +163,12 @@ export function Header() {
                   </button>
                 )}
 
-                {isAuthenticated ? (
+                {isAuthenticated && (
                   <Link
                     to="/admin"
                     className="mt-4 rounded-2xl border border-gold/40 bg-gold-soft/30 px-4 py-3 text-sm font-medium text-gold"
                   >
                     🛡️ ផ្ទាំងគ្រប់គ្រង Admin
-                  </Link>
-                ) : (
-                  <Link
-                    to="/admin/login"
-                    className="mt-4 rounded-2xl border border-border px-4 py-3 text-sm text-muted-foreground hover:text-foreground"
-                  >
-                    🔑 ចូលគណនីគ្រប់គ្រង
                   </Link>
                 )}
               </nav>

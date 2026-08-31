@@ -17,6 +17,7 @@ import { Footer } from "@/components/site/Footer";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/hooks/useAuth";
 import { initVisitorSession, trackPageView } from "@/lib/analytics";
+import { AdminShortcutListener } from "@/config/adminShortcut";
 
 function PageTracker() {
   const routerState = useRouterState();
@@ -139,6 +140,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <PageTracker />
+        <AdminShortcutListener />
         <div className="flex min-h-screen flex-col">
           <Header />
           <main className="flex-1">

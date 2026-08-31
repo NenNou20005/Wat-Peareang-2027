@@ -81,9 +81,6 @@ export const festivals: Festival[] = [
     accent: "var(--fest-omtouk)",
     month: "វិច្ឆិកា",
   },
-];
-
-export const PREDEFINED_EXTRA_FESTIVALS: Festival[] = [
   {
     id: "dar-lean",
     name: "បុណ្យដារលាន",
@@ -150,6 +147,8 @@ export const PREDEFINED_EXTRA_FESTIVALS: Festival[] = [
   },
 ];
 
+export const PREDEFINED_EXTRA_FESTIVALS: Festival[] = festivals.slice(8);
+
 export const STORAGE_CUSTOM_FESTIVALS_KEY = "watpeareang_custom_festivals";
 
 export function getCustomFestivals(): Festival[] {
@@ -175,7 +174,7 @@ export function saveCustomFestival(fest: Festival): Festival[] {
   }
 }
 
-export const years = [2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027, 2018];
+export const years = [2027, 2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018];
 
 const locations = ["វត្តពារាំង"];
 
@@ -187,6 +186,8 @@ export type Album = {
   location: string;
   photoCount: number;
   title: string;
+  description?: string | null | undefined;
+  coverImage?: string | null | undefined;
 };
 
 export const sampleImages = festivals.map((f) => f.cover);

@@ -71,9 +71,9 @@ export async function fetchYears(): Promise<number[]> {
  * Fetch albums with optional filtering by year, festivalId, search
  */
 export async function fetchAlbums(filters?: {
-  year?: number;
-  festivalId?: string;
-  search?: string;
+  year?: number | undefined;
+  festivalId?: string | undefined;
+  search?: string | undefined;
 }): Promise<Album[]> {
   try {
     const params = new URLSearchParams();
@@ -198,4 +198,95 @@ export async function fetchSearchResults(query: string): Promise<Album[]> {
   }
 
   return [];
+}
+
+export interface GalleryImage {
+  id: string;
+  albumId: string;
+  albumTitle?: string;
+  festivalName?: string;
+  year?: number;
+  title: string;
+  description?: string | null;
+  url: string;
+  thumbnailUrl?: string | null;
+  size?: number;
+  mimeType?: string;
+  photographer?: string | null;
+  dateTaken?: string | null;
+  copyright?: string | null;
+  tags?: string | string[] | null;
+  viewsCount?: number;
+  likesCount?: number;
+  downloadsCount?: number;
+  sharesCount?: number;
+  status?: string;
+  createdAt?: string;
+}
+
+export interface PaginatedImagesResponse {
+  images: GalleryImage[];
+  total: number;
+  totalPages: number;
+  page: number;
+  limit: number;
+}
+
+export interface ArchiveImageParams {
+  year?: number | string | undefined;
+  festivalId?: string | undefined;
+  albumId?: string | undefined;
+  search?: string | undefined;
+  page?: number | undefined;
+  limit?: number | undefined;
+}
+
+/**
+ * Fetch paginated archive images with direct Year, Festival, Album, and Search filters
+ */
+export async function fetchArchiveImages(
+  params?: ArchiveImageParams,
+): Promise<PaginatedImagesResponse> {
+  try {
+    const qs = new URLSearchParams();
+    if (params?.year && params.year !== "all") qs.set("year", String(params.year));
+    if (params?.festivalId && params.festivalId !== "all") qs.set("festivalId", params.festivalId);
+    if (params?.albumId && params.albumId !== "all") qs.set("albumId", params.albumId);
+    if (params?.search?.trim()) qs.set("search", params.search.trim());
+    if (params?.page) qs.set("page", String(params.page));
+    if (params?.limit) qs.set("limit", String(params.limit));
+
+    const queryString = qs.toString() ? `?${qs.toString()}` : "";
+    const res = await fetch(`/api/archive/images${queryString}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+
+    if (json.success && Array.isArray(json.data)) {
+      const mapped = json.data.map((img: GalleryImage) => ({
+        ...img,
+        url: resolveImageUrl(img.url),
+        thumbnailUrl: img.thumbnailUrl
+          ? resolveImageUrl(img.thumbnailUrl)
+          : resolveImageUrl(img.url),
+      }));
+
+      return {
+        images: mapped,
+        total: json.total || 0,
+        totalPages: json.totalPages || 1,
+        page: json.page || 1,
+        limit: json.limit || 24,
+      };
+    }
+  } catch (e) {
+    console.warn("[API Client] Failed to fetch archive images:", e);
+  }
+
+  return {
+    images: [],
+    total: 0,
+    totalPages: 1,
+    page: 1,
+    limit: 24,
+  };
 }
