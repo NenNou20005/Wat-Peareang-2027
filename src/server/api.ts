@@ -1053,7 +1053,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       method === "DELETE"
     ) {
       const targetId = pathname.replace("/api/admin/albums/", "").replace("/permanent", "").trim();
-      const result = db.permanentDeleteAlbum(targetId, currentUser);
+      const result = await db.permanentDeleteAlbum(targetId, currentUser);
       if (!result.success) return json({ success: false, error: result.error }, 400);
       return json({ success: true, message: "បានលុប Album ជាអចិន្ត្រៃយ៍។" });
     }
@@ -1394,7 +1394,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
           }
           let affected = 0;
           for (const id of ids) {
-            const res = db.permanentDeleteImage(id, currentUser);
+            const res = await db.permanentDeleteImage(id, currentUser);
             if (res.success) affected++;
           }
           return json({
@@ -1453,7 +1453,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       const currentUser = auth.user;
 
       const targetId = pathname.replace("/api/admin/images/", "").replace("/permanent", "").trim();
-      const result = db.permanentDeleteImage(targetId, currentUser);
+      const result = await db.permanentDeleteImage(targetId, currentUser);
       if (!result.success) return json({ success: false, error: result.error }, 400);
       return json({ success: true, message: "បានលុបរូបភាពជាអចិន្ត្រៃយ៍។" });
     }

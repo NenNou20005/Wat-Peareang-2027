@@ -176,6 +176,10 @@ export class R2StorageProvider implements StorageProvider {
 
   private extractKeyFromUrl(urlOrKey: string): string {
     if (!urlOrKey) return "";
+    // Protect static template assets from accidental R2 deletion
+    if (urlOrKey.startsWith("/assets/") || urlOrKey.startsWith("assets/")) {
+      return "";
+    }
     if (
       !urlOrKey.startsWith("http://") &&
       !urlOrKey.startsWith("https://") &&

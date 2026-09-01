@@ -11,6 +11,7 @@ import * as schema from "../db/schema.ts";
 import { eq, and, sql, desc, gte, inArray } from "drizzle-orm";
 import { migrateJsonToPostgres, initializeDatabaseSchema } from "../db/migrate.ts";
 import { seedStaticArchiveToPostgres } from "../db/seed-archive.ts";
+import { getStorageProvider } from "./storage/index.ts";
 import {
   recordPostgresVisitorSession,
   recordPostgresView,
@@ -1570,7 +1571,10 @@ class Database {
     return { success: true };
   }
 
-  public permanentDeleteAlbum(id: string, user: User): { success: boolean; error?: string } {
+  public async permanentDeleteAlbum(
+    id: string,
+    user: User,
+  ): Promise<{ success: boolean; error?: string }> {
     if (user.role !== "super_admin") {
       return { success: false, error: "មានតែ Super Admin ប៉ុណ្ណោះដែលអាចលុបជាអចិន្ត្រៃយ៍បាន។" };
     }
@@ -1578,6 +1582,28 @@ class Database {
     const album = this.data.albums.find((a) => a.id === id);
     if (!album) return { success: false, error: "រកមិនឃើញ Album នេះទេ។" };
 
+    // 1. Collect all images belonging to this album
+    const albumImages = this.data.images.filter((img) => img.albumId === id);
+
+    // 2. Delete all image files from Storage (Cloudflare R2 / Local Disk)
+    const storage = getStorageProvider();
+    for (const img of albumImages) {
+      try {
+        if (img.url) {
+          await storage.deleteImage(img.url);
+        }
+        if (img.thumbnailUrl && img.thumbnailUrl !== img.url) {
+          await storage.deleteImage(img.thumbnailUrl);
+        }
+      } catch (storageErr) {
+        console.error(
+          `[PermanentDeleteAlbum]: Storage deletion error for image ${img.id}:`,
+          storageErr,
+        );
+      }
+    }
+
+    // 3. Delete from Memory State
     this.data.albums = this.data.albums.filter((a) => a.id !== id);
     this.data.images = this.data.images.filter((img) => img.albumId !== id);
     this.logActivity({
@@ -1587,20 +1613,26 @@ class Database {
       action: "PERMANENT_DELETE_ALBUM",
       resource: "ALBUM",
       resourceId: id,
-      details: `បានលុប Album «${album.title}» ជាអចិន្ត្រៃយ៍`,
+      details: `បានលុប Album «${album.title}» និងរូបភាពទាំងអស់ក្នុង Album ជាអចិន្ត្រៃយ៍`,
     });
     this.save();
 
+    // 4. Delete from PostgreSQL Database
     const drizzle = getDrizzleDb();
     if (drizzle) {
-      drizzle
-        .delete(schema.images)
-        .where(eq(schema.images.albumId, id))
-        .catch(() => {});
-      drizzle
-        .delete(schema.albums)
-        .where(eq(schema.albums.id, id))
-        .catch(() => {});
+      try {
+        await drizzle.delete(schema.images).where(eq(schema.images.albumId, id));
+        await drizzle.delete(schema.albums).where(eq(schema.albums.id, id));
+      } catch (dbErr) {
+        console.error(
+          `[PermanentDeleteAlbum]: Failed to delete album/images from PostgreSQL for ${id}:`,
+          dbErr,
+        );
+        return {
+          success: false,
+          error: "មានបញ្ហាក្នុងការលុបទិន្នន័យ Album ពី PostgreSQL។",
+        };
+      }
     }
 
     return { success: true };
@@ -1755,7 +1787,10 @@ class Database {
     return { success: true };
   }
 
-  public permanentDeleteImage(id: string, user: User): { success: boolean; error?: string } {
+  public async permanentDeleteImage(
+    id: string,
+    user: User,
+  ): Promise<{ success: boolean; error?: string }> {
     if (user.role !== "super_admin") {
       return { success: false, error: "មានតែ Super Admin ប៉ុណ្ណោះដែលអាចលុបជាអចិន្ត្រៃយ៍បាន។" };
     }
@@ -1763,6 +1798,20 @@ class Database {
     const img = this.data.images.find((i) => i.id === id);
     if (!img) return { success: false, error: "រកមិនឃើញរូបភាពនេះទេ។" };
 
+    // 1. Delete image file(s) from Storage (Cloudflare R2 / Local Disk)
+    try {
+      const storage = getStorageProvider();
+      if (img.url) {
+        await storage.deleteImage(img.url);
+      }
+      if (img.thumbnailUrl && img.thumbnailUrl !== img.url) {
+        await storage.deleteImage(img.thumbnailUrl);
+      }
+    } catch (storageErr) {
+      console.error(`[PermanentDeleteImage]: Storage deletion error for image ${id}:`, storageErr);
+    }
+
+    // 2. Delete from Memory State
     this.data.images = this.data.images.filter((i) => i.id !== id);
     this.logActivity({
       userId: user.id,
@@ -1775,12 +1824,21 @@ class Database {
     });
     this.save();
 
+    // 3. Delete from PostgreSQL Database
     const drizzle = getDrizzleDb();
     if (drizzle) {
-      drizzle
-        .delete(schema.images)
-        .where(eq(schema.images.id, id))
-        .catch(() => {});
+      try {
+        await drizzle.delete(schema.images).where(eq(schema.images.id, id));
+      } catch (dbErr) {
+        console.error(
+          `[PermanentDeleteImage]: Failed to delete image row from PostgreSQL for ${id}:`,
+          dbErr,
+        );
+        return {
+          success: false,
+          error: "មានបញ្ហាក្នុងការលុបទិន្នន័យរូបភាពពី PostgreSQL។",
+        };
+      }
     }
 
     return { success: true };
