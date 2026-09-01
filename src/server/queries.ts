@@ -138,6 +138,12 @@ export async function getPostgresAlbums(filter?: {
       .select({
         album: schema.albums,
         festival: schema.festivals,
+        actualPhotoCount: sql<number>`(
+          SELECT count(*)::int FROM ${schema.images}
+          WHERE ${schema.images.albumId} = ${schema.albums.id}
+          AND ${schema.images.status} != 'trashed'
+          AND ${schema.images.deletedAt} IS NULL
+        )`,
       })
       .from(schema.albums)
       .innerJoin(schema.festivals, eq(schema.albums.festivalId, schema.festivals.id))
@@ -148,7 +154,7 @@ export async function getPostgresAlbums(filter?: {
       return [];
     }
 
-    let mapped: DbAlbum[] = rows.map(({ album, festival }) => {
+    let mapped: DbAlbum[] = rows.map(({ album, festival, actualPhotoCount }) => {
       const festObj: Festival = {
         id: festival.id,
         name: festival.name,
@@ -158,13 +164,18 @@ export async function getPostgresAlbums(filter?: {
         cover: festival.coverUrl || `/assets/fest-${festival.id}.jpg`,
       };
 
+      const realCount =
+        actualPhotoCount !== undefined && actualPhotoCount !== null
+          ? Number(actualPhotoCount)
+          : album.photoCount || 0;
+
       return {
         id: album.id,
         festivalId: album.festivalId,
         festival: festObj,
         year: album.year,
         location: album.location,
-        photoCount: album.photoCount,
+        photoCount: realCount,
         title: album.title,
         description: album.description,
         coverImage: album.coverImage || festObj.cover,
@@ -219,6 +230,12 @@ export async function getPostgresAlbumById(albumId: string): Promise<DbAlbum | n
       .select({
         album: schema.albums,
         festival: schema.festivals,
+        actualPhotoCount: sql<number>`(
+          SELECT count(*)::int FROM ${schema.images}
+          WHERE ${schema.images.albumId} = ${schema.albums.id}
+          AND ${schema.images.status} != 'trashed'
+          AND ${schema.images.deletedAt} IS NULL
+        )`,
       })
       .from(schema.albums)
       .innerJoin(schema.festivals, eq(schema.albums.festivalId, schema.festivals.id))
@@ -229,7 +246,7 @@ export async function getPostgresAlbumById(albumId: string): Promise<DbAlbum | n
       return null;
     }
 
-    const { album, festival } = rows[0]!;
+    const { album, festival, actualPhotoCount } = rows[0]!;
     const festObj: Festival = {
       id: festival.id,
       name: festival.name,
@@ -239,13 +256,18 @@ export async function getPostgresAlbumById(albumId: string): Promise<DbAlbum | n
       cover: festival.coverUrl || `/assets/fest-${festival.id}.jpg`,
     };
 
+    const realCount =
+      actualPhotoCount !== undefined && actualPhotoCount !== null
+        ? Number(actualPhotoCount)
+        : album.photoCount || 0;
+
     return {
       id: album.id,
       festivalId: album.festivalId,
       festival: festObj,
       year: album.year,
       location: album.location,
-      photoCount: album.photoCount,
+      photoCount: realCount,
       title: album.title,
       description: album.description,
       coverImage: album.coverImage || festObj.cover,
@@ -348,11 +370,19 @@ export async function getPostgresArchiveStats(targetYear?: number): Promise<Arch
         db
           .select({
             year: schema.albums.year,
-            albumCount: sql<number>`count(*)`,
-            photoSum: sql<number>`sum(${schema.albums.photoCount})`,
+            albumCount: sql<number>`count(distinct ${schema.albums.id})`,
+            photoSum: sql<number>`count(${schema.images.id})`,
             locationCount: sql<number>`count(distinct ${schema.albums.location})`,
           })
           .from(schema.albums)
+          .leftJoin(
+            schema.images,
+            and(
+              eq(schema.images.albumId, schema.albums.id),
+              sql`${schema.images.status} != 'trashed'`,
+              sql`${schema.images.deletedAt} IS NULL`,
+            ),
+          )
           .where(sql`${schema.albums.status} != 'trashed'`)
           .groupBy(schema.albums.year),
       ]);
@@ -616,6 +646,12 @@ export async function getAdminAlbumsPaginated(params: {
       .select({
         album: schema.albums,
         festival: schema.festivals,
+        actualPhotoCount: sql<number>`(
+          SELECT count(*)::int FROM ${schema.images}
+          WHERE ${schema.images.albumId} = ${schema.albums.id}
+          AND ${schema.images.status} != 'trashed'
+          AND ${schema.images.deletedAt} IS NULL
+        )`,
       })
       .from(schema.albums)
       .innerJoin(schema.festivals, eq(schema.albums.festivalId, schema.festivals.id))
@@ -624,27 +660,34 @@ export async function getAdminAlbumsPaginated(params: {
       .limit(limit)
       .offset(offset);
 
-    const mapped: DbAlbum[] = rows.map(({ album, festival }) => ({
-      id: album.id,
-      festivalId: album.festivalId,
-      festival: {
-        id: festival.id,
-        name: festival.name,
-        emoji: festival.emoji,
-        accent: festival.accent,
-        month: festival.month,
-        cover: festival.coverUrl || `/assets/fest-${festival.id}.jpg`,
-      },
-      year: album.year,
-      location: album.location,
-      photoCount: album.photoCount,
-      title: album.title,
-      description: album.description,
-      coverImage: album.coverImage || festival.coverUrl || `/assets/fest-${festival.id}.jpg`,
-      viewsCount: album.viewsCount,
-      likesCount: album.likesCount,
-      status: album.status,
-    }));
+    const mapped: DbAlbum[] = rows.map(({ album, festival, actualPhotoCount }) => {
+      const realCount =
+        actualPhotoCount !== undefined && actualPhotoCount !== null
+          ? Number(actualPhotoCount)
+          : album.photoCount || 0;
+
+      return {
+        id: album.id,
+        festivalId: album.festivalId,
+        festival: {
+          id: festival.id,
+          name: festival.name,
+          emoji: festival.emoji,
+          accent: festival.accent,
+          month: festival.month,
+          cover: festival.coverUrl || `/assets/fest-${festival.id}.jpg`,
+        },
+        year: album.year,
+        location: album.location,
+        photoCount: realCount,
+        title: album.title,
+        description: album.description,
+        coverImage: album.coverImage || festival.coverUrl || `/assets/fest-${festival.id}.jpg`,
+        viewsCount: album.viewsCount,
+        likesCount: album.likesCount,
+        status: album.status,
+      };
+    });
 
     return {
       albums: mapped,

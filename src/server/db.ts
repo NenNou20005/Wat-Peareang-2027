@@ -350,6 +350,31 @@ class Database {
         this.data.years = pgYears.map((y) => y.year);
       }
 
+      // 5. Reconcile PostgreSQL schema.albums.photoCount with schema.images counts
+      try {
+        const counts = await drizzle
+          .select({
+            albumId: schema.images.albumId,
+            count: sql<number>`count(*)`,
+          })
+          .from(schema.images)
+          .where(
+            and(sql`${schema.images.status} != 'trashed'`, sql`${schema.images.deletedAt} IS NULL`),
+          )
+          .groupBy(schema.images.albumId);
+
+        for (const row of counts) {
+          await drizzle
+            .update(schema.albums)
+            .set({
+              photoCount: Number(row.count),
+            })
+            .where(eq(schema.albums.id, row.albumId));
+        }
+      } catch {
+        // non-blocking
+      }
+
       console.log(
         `[Wat Peareang Archive]: Hydrated memory state from PostgreSQL (${this.data.festivals.length} festivals, ${this.data.years.length} years, ${this.data.users.length} users).`,
       );
