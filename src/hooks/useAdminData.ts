@@ -595,6 +595,7 @@ export function useDeleteAlbum() {
     onSuccess: async (_, albumId) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["admin", "albums"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin", "images"] }),
         queryClient.invalidateQueries({ queryKey: adminKeys.trash() }),
         queryClient.invalidateQueries({ queryKey: adminKeys.dashboard() }),
         queryClient.invalidateQueries({ queryKey: archiveKeys.album(albumId) }),

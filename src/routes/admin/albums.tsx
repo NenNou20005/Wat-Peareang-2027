@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { AdminLayout } from "@/components/admin/AdminLayout";
 import {
@@ -44,6 +44,8 @@ export const Route = createFileRoute("/admin/albums")({
 });
 
 function AdminAlbumsPage() {
+  const navigate = useNavigate();
+
   // Filters & Pagination state
   const [search, setSearch] = useState("");
   const [selectedFestival, setSelectedFestival] = useState<string>("all");
@@ -152,6 +154,7 @@ function AdminAlbumsPage() {
     try {
       await deleteAlbumMutation.mutateAsync(album.id);
       toast.success("បានផ្លាស់ទី Album ទៅកាន់ធុងសំរាមរួចរាល់។");
+      navigate({ to: "/admin/albums" });
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការលុប Album។";
       toast.error(errorMsg);
