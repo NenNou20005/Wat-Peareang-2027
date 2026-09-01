@@ -910,9 +910,12 @@ export async function getAdminTrashItems() {
     const mappedFestivals = trashedFestivals.map((f) => ({
       id: f.id,
       type: "festival" as const,
+      name: f.name,
       title: f.name,
       emoji: f.emoji,
+      month: f.month,
       deletedAt: f.updatedAt.toISOString(),
+      trashedAt: f.updatedAt.toISOString(),
       canRestore: true,
     }));
 
@@ -923,8 +926,11 @@ export async function getAdminTrashItems() {
         type: "album" as const,
         title: album.title,
         year: album.year,
+        festivalId: album.festivalId,
         festivalName: festival?.name,
+        photoCount: album.photoCount || 0,
         deletedAt: album.updatedAt.toISOString(),
+        trashedAt: album.updatedAt.toISOString(),
         canRestore: !!festivalActive,
         blockReason: !festivalActive
           ? "ត្រូវស្តារប្រភេទបុណ្យឡើងវិញជាមុនសិន ទើបអាចស្តារ Album នេះបាន។"
@@ -937,11 +943,14 @@ export async function getAdminTrashItems() {
       return {
         id: img.id,
         type: "image" as const,
-        title: img.title,
+        title: img.title || img.description || "រូបភាព",
+        description: img.description,
         url: img.url,
         thumbnailUrl: img.thumbnailUrl,
+        albumId: img.albumId,
         albumTitle: album?.title,
         deletedAt: (img.deletedAt || img.updatedAt).toISOString(),
+        trashedAt: (img.deletedAt || img.updatedAt).toISOString(),
         canRestore: !!albumActive,
         blockReason: !albumActive
           ? "ត្រូវស្តារ Album ឡើងវិញជាមុនសិន ទើបអាចស្តាររូបភាពនេះបាន។"

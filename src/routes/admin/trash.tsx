@@ -90,19 +90,41 @@ function AdminTrashPage() {
     }
   };
 
-  const totalTrashed = data.festivals.length + data.albums.length + data.images.length;
+  const totalTrashed =
+    (data?.festivals?.length || 0) + (data?.albums?.length || 0) + (data?.images?.length || 0);
 
-  const filteredFestivals = data.festivals.filter((f) =>
-    f.name.toLowerCase().includes(search.toLowerCase()),
-  );
-  const filteredAlbums = data.albums.filter(
-    (a) =>
-      a.title.toLowerCase().includes(search.toLowerCase()) ||
-      a.festivalId.toLowerCase().includes(search.toLowerCase()),
-  );
-  const filteredImages = data.images.filter((i) =>
-    i.title.toLowerCase().includes(search.toLowerCase()),
-  );
+  const query = (search || "").toLowerCase().trim();
+
+  const filteredFestivals = (data?.festivals || []).filter((f) => {
+    if (!query) return true;
+    const name = (f?.name || (f as { title?: string })?.title || f?.id || "").toLowerCase();
+    const id = (f?.id || "").toLowerCase();
+    return name.includes(query) || id.includes(query);
+  });
+  const filteredAlbums = (data?.albums || []).filter((a) => {
+    if (!query) return true;
+    const title = (a?.title || a?.id || "").toLowerCase();
+    const festivalId = (
+      a?.festivalId ||
+      (a as { festivalName?: string })?.festivalName ||
+      ""
+    ).toLowerCase();
+    const id = (a?.id || "").toLowerCase();
+    return title.includes(query) || festivalId.includes(query) || id.includes(query);
+  });
+  const filteredImages = (data?.images || []).filter((i) => {
+    if (!query) return true;
+    const title = (
+      i?.title ||
+      (i as { caption?: string })?.caption ||
+      (i as { albumTitle?: string })?.albumTitle ||
+      i?.id ||
+      ""
+    ).toLowerCase();
+    const albumId = (i?.albumId || (i as { albumTitle?: string })?.albumTitle || "").toLowerCase();
+    const id = (i?.id || "").toLowerCase();
+    return title.includes(query) || albumId.includes(query) || id.includes(query);
+  });
 
   return (
     <AdminLayout requiredPermission="manage_trash">
@@ -239,52 +261,55 @@ function AdminTrashPage() {
                   {filteredFestivals.length})
                 </h3>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {filteredFestivals.map((fest) => (
-                    <div
-                      key={fest.id}
-                      className="rounded-2xl border border-border/80 bg-card p-4 shadow-soft flex items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-secondary text-xl">
-                          {fest.emoji}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-semibold text-foreground">
-                            {fest.name}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground font-mono">
-                            ID: {fest.id}
-                          </p>
+                  {filteredFestivals.map((fest) => {
+                    const festName = fest.name || (fest as { title?: string }).title || fest.id;
+                    return (
+                      <div
+                        key={fest.id}
+                        className="rounded-2xl border border-border/80 bg-card p-4 shadow-soft flex items-center justify-between gap-3"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-secondary text-xl">
+                            {fest.emoji}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-semibold text-foreground">
+                              {festName}
+                            </p>
+                            <p className="text-[10px] text-muted-foreground font-mono">
+                              ID: {fest.id}
+                            </p>
+                          </div>
                         </div>
-                      </div>
 
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleRestore("festival", fest.id, fest.name)}
-                          disabled={actionLoadingId === fest.id}
-                          className="h-8 rounded-xl text-xs gap-1 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10"
-                          title="ស្តារពិធីបុណ្យឡើងវិញ"
-                        >
-                          <RotateCcw className="h-3 w-3" /> ស្តារ
-                        </Button>
-
-                        {isSuperAdmin && (
+                        <div className="flex items-center gap-1.5 shrink-0">
                           <Button
                             size="sm"
-                            variant="ghost"
-                            onClick={() => handlePermanentDelete("festival", fest.id, fest.name)}
+                            variant="outline"
+                            onClick={() => handleRestore("festival", fest.id, festName)}
                             disabled={actionLoadingId === fest.id}
-                            className="h-8 w-8 rounded-xl p-0 text-destructive hover:bg-destructive/10"
-                            title="លុបជាអចិន្ត្រៃយ៍"
+                            className="h-8 rounded-xl text-xs gap-1 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10"
+                            title="ស្តារពិធីបុណ្យឡើងវិញ"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <RotateCcw className="h-3 w-3" /> ស្តារ
                           </Button>
-                        )}
+
+                          {isSuperAdmin && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handlePermanentDelete("festival", fest.id, festName)}
+                              disabled={actionLoadingId === fest.id}
+                              className="h-8 w-8 rounded-xl p-0 text-destructive hover:bg-destructive/10"
+                              title="លុបជាអចិន្ត្រៃយ៍"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -297,55 +322,62 @@ function AdminTrashPage() {
                   {filteredAlbums.length})
                 </h3>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {filteredAlbums.map((album) => (
-                    <div
-                      key={album.id}
-                      className="rounded-2xl border border-border/80 bg-card p-4 shadow-soft flex items-center justify-between gap-3"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="rounded bg-secondary px-1.5 py-0.5 text-[9px] font-medium text-foreground">
-                            {album.festivalId}
-                          </span>
-                          <span className="text-[10px] font-semibold text-gold font-mono">
-                            ឆ្នាំ {album.year}
-                          </span>
+                  {filteredAlbums.map((album) => {
+                    const albumTitle = album.title || album.id;
+                    const festivalBadge =
+                      (album as { festivalName?: string }).festivalName ||
+                      album.festivalId ||
+                      "Album";
+                    return (
+                      <div
+                        key={album.id}
+                        className="rounded-2xl border border-border/80 bg-card p-4 shadow-soft flex items-center justify-between gap-3"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="rounded bg-secondary px-1.5 py-0.5 text-[9px] font-medium text-foreground">
+                              {festivalBadge}
+                            </span>
+                            <span className="text-[10px] font-semibold text-gold font-mono">
+                              ឆ្នាំ {album.year}
+                            </span>
+                          </div>
+                          <p className="mt-1 truncate text-xs font-semibold text-foreground">
+                            {albumTitle}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground font-mono">
+                            {album.photoCount ?? 0} រូបភាព
+                          </p>
                         </div>
-                        <p className="mt-1 truncate text-xs font-semibold text-foreground">
-                          {album.title}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground font-mono">
-                          {album.photoCount} រូបភាព
-                        </p>
-                      </div>
 
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleRestore("album", album.id, album.title)}
-                          disabled={actionLoadingId === album.id}
-                          className="h-8 rounded-xl text-xs gap-1 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10"
-                          title="ស្តារ Album ឡើងវិញ"
-                        >
-                          <RotateCcw className="h-3 w-3" /> ស្តារ
-                        </Button>
-
-                        {isSuperAdmin && (
+                        <div className="flex items-center gap-1.5 shrink-0">
                           <Button
                             size="sm"
-                            variant="ghost"
-                            onClick={() => handlePermanentDelete("album", album.id, album.title)}
+                            variant="outline"
+                            onClick={() => handleRestore("album", album.id, albumTitle)}
                             disabled={actionLoadingId === album.id}
-                            className="h-8 w-8 rounded-xl p-0 text-destructive hover:bg-destructive/10"
-                            title="លុបជាអចិន្ត្រៃយ៍"
+                            className="h-8 rounded-xl text-xs gap-1 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10"
+                            title="ស្តារ Album ឡើងវិញ"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
+                            <RotateCcw className="h-3 w-3" /> ស្តារ
                           </Button>
-                        )}
+
+                          {isSuperAdmin && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handlePermanentDelete("album", album.id, albumTitle)}
+                              disabled={actionLoadingId === album.id}
+                              className="h-8 w-8 rounded-xl p-0 text-destructive hover:bg-destructive/10"
+                              title="លុបជាអចិន្ត្រៃយ៍"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -358,56 +390,64 @@ function AdminTrashPage() {
                   {filteredImages.length})
                 </h3>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-                  {filteredImages.map((img) => (
-                    <div
-                      key={img.id}
-                      className="group relative overflow-hidden rounded-2xl border border-border/80 bg-card shadow-soft"
-                    >
-                      <div className="aspect-square w-full overflow-hidden bg-secondary">
-                        <img
-                          src={resolveImageUrl(img.url)}
-                          alt={img.title}
-                          className="h-full w-full object-cover opacity-75 grayscale transition-all group-hover:grayscale-0 group-hover:opacity-100"
-                          loading="lazy"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).src = resolveImageUrl(null);
-                          }}
-                        />
-                      </div>
+                  {filteredImages.map((img) => {
+                    const imgTitle =
+                      img.title ||
+                      (img as { caption?: string }).caption ||
+                      (img as { albumTitle?: string }).albumTitle ||
+                      img.id;
+                    const imgSub = (img as { albumTitle?: string }).albumTitle || img.albumId || "";
+                    return (
+                      <div
+                        key={img.id}
+                        className="group relative overflow-hidden rounded-2xl border border-border/80 bg-card shadow-soft"
+                      >
+                        <div className="aspect-square w-full overflow-hidden bg-secondary">
+                          <img
+                            src={resolveImageUrl(img.url)}
+                            alt={imgTitle}
+                            className="h-full w-full object-cover opacity-75 grayscale transition-all group-hover:grayscale-0 group-hover:opacity-100"
+                            loading="lazy"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = resolveImageUrl(null);
+                            }}
+                          />
+                        </div>
 
-                      <div className="p-2">
-                        <p className="truncate text-[11px] font-semibold text-foreground">
-                          {img.title}
-                        </p>
-                        <p className="truncate text-[9px] text-muted-foreground font-mono">
-                          {img.albumId}
-                        </p>
-                      </div>
+                        <div className="p-2">
+                          <p className="truncate text-[11px] font-semibold text-foreground">
+                            {imgTitle}
+                          </p>
+                          <p className="truncate text-[9px] text-muted-foreground font-mono">
+                            {imgSub}
+                          </p>
+                        </div>
 
-                      <div className="absolute inset-0 bg-black/60 opacity-0 transition-opacity group-hover:opacity-100 flex flex-col items-center justify-center gap-2 p-2">
-                        <Button
-                          size="sm"
-                          onClick={() => handleRestore("image", img.id, img.title)}
-                          disabled={actionLoadingId === img.id}
-                          className="w-full h-7 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-[10px] text-white"
-                        >
-                          <RotateCcw className="mr-1 h-3 w-3" /> ស្តារ
-                        </Button>
-
-                        {isSuperAdmin && (
+                        <div className="absolute inset-0 bg-black/60 opacity-0 transition-opacity group-hover:opacity-100 flex flex-col items-center justify-center gap-2 p-2">
                           <Button
                             size="sm"
-                            variant="destructive"
-                            onClick={() => handlePermanentDelete("image", img.id, img.title)}
+                            onClick={() => handleRestore("image", img.id, imgTitle)}
                             disabled={actionLoadingId === img.id}
-                            className="w-full h-7 rounded-xl text-[10px]"
+                            className="w-full h-7 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-[10px] text-white"
                           >
-                            <Trash2 className="mr-1 h-3 w-3" /> លុបដាច់
+                            <RotateCcw className="mr-1 h-3 w-3" /> ស្តារ
                           </Button>
-                        )}
+
+                          {isSuperAdmin && (
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => handlePermanentDelete("image", img.id, imgTitle)}
+                              disabled={actionLoadingId === img.id}
+                              className="w-full h-7 rounded-xl text-[10px]"
+                            >
+                              <Trash2 className="mr-1 h-3 w-3" /> លុបដាច់
+                            </Button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
