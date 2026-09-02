@@ -1,5 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useState, useMemo, useEffect } from "react";
 import { AdminLayout } from "@/components/admin/AdminLayout";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -65,6 +65,7 @@ export const Route = createFileRoute("/admin/images")({
 });
 
 function AdminImagesPage() {
+  const navigate = useNavigate();
   const { hasPermission, isSuperAdmin } = useAuth();
   const routeSearch = Route.useSearch();
 
@@ -85,6 +86,31 @@ function AdminImagesPage() {
   const { data: years = [] } = useAdminYears();
   const { data: albumsData } = useAdminAlbums({ limit: 500 });
   const albums = useMemo(() => albumsData?.albums || [], [albumsData?.albums]);
+
+  // Validate routeSearch.albumId against active albums
+  useEffect(() => {
+    if (!albumsData) return;
+    const urlAlbumId = routeSearch.albumId;
+    if (urlAlbumId && urlAlbumId !== "all") {
+      const exists = albums.some((a) => a.id === urlAlbumId);
+      if (!exists) {
+        toast.warning("Album ដែលបានជ្រើសរើសមិនមាន ឬត្រូវបានផ្លាស់ទីទៅកាន់ធុងសំរាមរួចហើយ។");
+        setSelectedAlbum("all");
+        navigate({
+          to: "/admin/images",
+          search: (prev: ImageSearch) => ({
+            ...prev,
+            albumId: undefined,
+          }),
+          replace: true,
+        });
+      } else if (selectedAlbum !== urlAlbumId) {
+        setSelectedAlbum(urlAlbumId);
+      }
+    } else if (!urlAlbumId && selectedAlbum !== "all") {
+      setSelectedAlbum("all");
+    }
+  }, [albumsData, routeSearch.albumId, albums, navigate, selectedAlbum]);
 
   // Matching albums for target selection
   const filteredAlbums = useMemo(() => {
@@ -167,6 +193,11 @@ function AdminImagesPage() {
     setSelectedYear("all");
     setSelectedAlbum("all");
     setPage(1);
+    navigate({
+      to: "/admin/images",
+      search: {},
+      replace: true,
+    });
   };
 
   // Open Upload modal with defaults
@@ -183,12 +214,14 @@ function AdminImagesPage() {
       setUploadFestivalId(festivals[0].id);
     }
 
-    if (selectedAlbum !== "all") {
+    const isValidSelectedAlbum =
+      selectedAlbum !== "all" && albums.some((a) => a.id === selectedAlbum);
+
+    if (isValidSelectedAlbum) {
       setUploadAlbumId(selectedAlbum);
-    } else if (filteredAlbums.length > 0 && filteredAlbums[0]) {
-      setUploadAlbumId(filteredAlbums[0].id);
-    } else if (albums.length > 0 && albums[0]) {
-      setUploadAlbumId(albums[0].id);
+    } else {
+      // Do NOT automatically fallback to an arbitrary album - require explicit selection or creation
+      setUploadAlbumId("");
     }
     setIsUploadOpen(true);
   };
@@ -275,13 +308,18 @@ function AdminImagesPage() {
       }
 
       if (!effectiveAlbumId) {
-        const fallback = albums[0]?.id;
-        if (!fallback) {
-          toast.error("សូមជ្រើសរើស ឬបង្កើត Album គោលដៅ។");
+        toast.error("សូមជ្រើសរើស ឬបង្កើត Album គោលដៅជាមុនសិន។");
+        setIsUploading(false);
+        return;
+      }
+
+      if (!isCreatingNewAlbum) {
+        const targetAlbumExists = albums.some((a) => a.id === effectiveAlbumId);
+        if (!targetAlbumExists) {
+          toast.error("Album គោលដៅមិនមាន ឬត្រូវបានផ្លាស់ទីទៅកាន់ធុងសំរាមរួចហើយ។");
           setIsUploading(false);
           return;
         }
-        effectiveAlbumId = fallback;
       }
 
       let successCount = 0;
@@ -491,8 +529,18 @@ function AdminImagesPage() {
           <select
             value={selectedAlbum}
             onChange={(e) => {
-              setSelectedAlbum(e.target.value);
+              const val = e.target.value;
+              setSelectedAlbum(val);
               setPage(1);
+              navigate({
+                to: "/admin/images",
+                search: (prev: ImageSearch) => ({
+                  ...prev,
+                  albumId: val === "all" ? undefined : val,
+                  page: 1,
+                }),
+                replace: true,
+              });
             }}
             className="rounded-2xl border border-border bg-card px-3 h-10 text-xs text-foreground shadow-sm"
           >
@@ -761,6 +809,7 @@ function AdminImagesPage() {
                         onChange={(e) => setUploadAlbumId(e.target.value)}
                         className="mt-1 w-full rounded-xl border border-border bg-card px-2.5 h-9 text-xs"
                       >
+                        <option value="">-- សូមជ្រើសរើស Album --</option>
                         {albums
                           .filter(
                             (a) =>

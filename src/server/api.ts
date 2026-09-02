@@ -1029,7 +1029,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       method === "POST"
     ) {
       const targetId = pathname.replace("/api/admin/albums/", "").replace("/trash", "").trim();
-      const result = db.trashAlbum(targetId, currentUser);
+      const result = await db.trashAlbum(targetId, currentUser);
       if (!result.success) return json({ success: false, error: result.error }, 400);
       return json({ success: true, message: "បានផ្លាស់ទី Album ទៅកាន់ធុងសំរាមរួចរាល់។" });
     }
@@ -1041,7 +1041,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       method === "POST"
     ) {
       const targetId = pathname.replace("/api/admin/albums/", "").replace("/restore", "").trim();
-      const result = db.restoreAlbum(targetId, currentUser);
+      const result = await db.restoreAlbum(targetId, currentUser);
       if (!result.success) return json({ success: false, error: result.error }, 400);
       return json({ success: true, message: "បានស្តារ Album ឡើងវិញដោយជោគជ័យ។" });
     }
@@ -1063,7 +1063,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       const targetId = pathname.replace("/api/admin/albums/", "").trim();
       try {
         const body = await request.json();
-        const result = db.updateAlbum(targetId, body, currentUser);
+        const result = await db.updateAlbum(targetId, body, currentUser);
         if (!result.success) return json({ success: false, error: result.error }, 400);
         return json({ success: true });
       } catch {
@@ -1074,7 +1074,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     // DELETE /api/admin/albums/:id (Defaults to Soft Delete Trash)
     if (pathname.startsWith("/api/admin/albums/") && method === "DELETE") {
       const targetId = pathname.replace("/api/admin/albums/", "").trim();
-      const result = db.trashAlbum(targetId, currentUser);
+      const result = await db.trashAlbum(targetId, currentUser);
       if (!result.success) return json({ success: false, error: result.error }, 400);
       return json({ success: true, message: "បានផ្លាស់ទី Album ទៅកាន់ធុងសំរាមរួចរាល់។" });
     }

@@ -351,7 +351,27 @@ class Database {
         this.data.years = pgYears.map((y) => y.year);
       }
 
-      // 5. Reconcile PostgreSQL schema.albums.photoCount with schema.images counts
+      // 5. Hydrate albums from PostgreSQL
+      const pgAlbums = await drizzle.select().from(schema.albums);
+      if (pgAlbums && pgAlbums.length > 0) {
+        this.data.albums = pgAlbums.map((a) => ({
+          id: a.id,
+          festivalId: a.festivalId,
+          year: a.year,
+          location: a.location || "វត្តពារាំង",
+          title: a.title,
+          description: a.description || undefined,
+          coverImage: a.coverImage || undefined,
+          photoCount: a.photoCount || 0,
+          status: a.status || "published",
+          viewsCount: a.viewsCount || 0,
+          likesCount: a.likesCount || 0,
+          createdAt: a.createdAt ? new Date(a.createdAt).toISOString() : new Date().toISOString(),
+          updatedAt: a.updatedAt ? new Date(a.updatedAt).toISOString() : undefined,
+        }));
+      }
+
+      // 6. Reconcile PostgreSQL schema.albums.photoCount with schema.images counts
       try {
         const counts = await drizzle
           .select({
@@ -377,7 +397,7 @@ class Database {
       }
 
       console.log(
-        `[Wat Peareang Archive]: Hydrated memory state from PostgreSQL (${this.data.festivals.length} festivals, ${this.data.years.length} years, ${this.data.users.length} users).`,
+        `[Wat Peareang Archive]: Hydrated memory state from PostgreSQL (${this.data.festivals.length} festivals, ${this.data.years.length} years, ${this.data.albums.length} albums, ${this.data.users.length} users).`,
       );
     } catch (err) {
       console.warn("[Wat Peareang Archive]: Failed to hydrate from PostgreSQL:", err);
@@ -1469,14 +1489,66 @@ class Database {
     return { success: true };
   }
 
-  public updateAlbum(
+  public async updateAlbum(
     id: string,
     updates: Partial<StoredAlbum>,
     user: User,
-  ): { success: boolean; error?: string } {
+  ): Promise<{ success: boolean; error?: string }> {
+    const drizzle = getDrizzleDb();
+    let foundInPg = false;
+    let albumTitle = id;
+
+    if (drizzle && isPostgresConfigured()) {
+      try {
+        const [pgAlbum] = await drizzle
+          .select()
+          .from(schema.albums)
+          .where(eq(schema.albums.id, id))
+          .limit(1);
+
+        if (pgAlbum) {
+          foundInPg = true;
+          albumTitle = updates.title?.trim() || pgAlbum.title;
+          await drizzle
+            .update(schema.albums)
+            .set({
+              festivalId: updates.festivalId || pgAlbum.festivalId,
+              year: updates.year || pgAlbum.year,
+              title: updates.title !== undefined ? updates.title.trim() : pgAlbum.title,
+              description:
+                updates.description !== undefined
+                  ? updates.description?.trim() || null
+                  : pgAlbum.description,
+              location:
+                updates.location !== undefined
+                  ? updates.location?.trim() || "វត្តពារាំង"
+                  : pgAlbum.location,
+              coverImage:
+                updates.coverImage !== undefined
+                  ? updates.coverImage?.trim() || null
+                  : pgAlbum.coverImage,
+              status: updates.status || pgAlbum.status || "published",
+              updatedAt: new Date(),
+            })
+            .where(eq(schema.albums.id, id));
+        }
+      } catch (err) {
+        console.error(`[updateAlbum]: PostgreSQL update error for album ${id}:`, err);
+        return { success: false, error: "មានបញ្ហាក្នុងការកែប្រែ Album ក្នុង PostgreSQL។" };
+      }
+    }
+
     const album = this.data.albums.find((a) => a.id === id);
-    if (!album) return { success: false, error: "រកមិនឃើញ Album នេះទេ។" };
-    Object.assign(album, updates);
+    if (album) {
+      Object.assign(album, updates);
+      albumTitle = album.title;
+      this.save();
+    }
+
+    if (!album && !foundInPg) {
+      return { success: false, error: "រកមិនឃើញ Album នេះទេ។" };
+    }
+
     this.logActivity({
       userId: user.id,
       userName: user.name,
@@ -1484,36 +1556,56 @@ class Database {
       action: "EDIT_ALBUM",
       resource: "ALBUM",
       resourceId: id,
-      details: `បានកែសម្រួល Album «${album.title}»`,
+      details: `បានកែសម្រួល Album «${albumTitle}»`,
     });
-    this.save();
-
-    const drizzle = getDrizzleDb();
-    if (drizzle) {
-      drizzle
-        .update(schema.albums)
-        .set({
-          festivalId: album.festivalId,
-          year: album.year,
-          title: album.title,
-          description: album.description || null,
-          location: album.location,
-          coverImage: album.coverImage || null,
-          status: album.status || "published",
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.albums.id, id))
-        .catch(() => {});
-    }
 
     return { success: true };
   }
 
-  public trashAlbum(id: string, user: User): { success: boolean; error?: string } {
-    const album = this.data.albums.find((a) => a.id === id);
-    if (!album) return { success: false, error: "រកមិនឃើញ Album នេះទេ។" };
+  public async trashAlbum(id: string, user: User): Promise<{ success: boolean; error?: string }> {
+    const drizzle = getDrizzleDb();
+    let foundInPg = false;
+    let albumTitle = id;
 
-    album.status = "trashed";
+    if (drizzle && isPostgresConfigured()) {
+      try {
+        const [pgAlbum] = await drizzle
+          .select()
+          .from(schema.albums)
+          .where(eq(schema.albums.id, id))
+          .limit(1);
+
+        if (pgAlbum) {
+          foundInPg = true;
+          albumTitle = pgAlbum.title;
+          await drizzle
+            .update(schema.albums)
+            .set({
+              status: "trashed",
+              updatedAt: new Date(),
+            })
+            .where(eq(schema.albums.id, id));
+        }
+      } catch (err) {
+        console.error(`[trashAlbum]: PostgreSQL update error for album ${id}:`, err);
+        return {
+          success: false,
+          error: "មានបញ្ហាក្នុងការផ្លាស់ទី Album ទៅធុងសំរាមក្នុង PostgreSQL។",
+        };
+      }
+    }
+
+    const album = this.data.albums.find((a) => a.id === id);
+    if (album) {
+      album.status = "trashed";
+      albumTitle = album.title;
+      this.save();
+    }
+
+    if (!album && !foundInPg) {
+      return { success: false, error: "រកមិនឃើញ Album នេះទេ។" };
+    }
+
     this.logActivity({
       userId: user.id,
       userName: user.name,
@@ -1521,30 +1613,53 @@ class Database {
       action: "TRASH_ALBUM",
       resource: "ALBUM",
       resourceId: id,
-      details: `បានផ្លាស់ទី Album «${album.title}» ទៅកាន់ធុងសំរាម`,
+      details: `បានផ្លាស់ទី Album «${albumTitle}» ទៅកាន់ធុងសំរាម`,
     });
-    this.save();
-
-    const drizzle = getDrizzleDb();
-    if (drizzle) {
-      drizzle
-        .update(schema.albums)
-        .set({
-          status: "trashed",
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.albums.id, id))
-        .catch(() => {});
-    }
 
     return { success: true };
   }
 
-  public restoreAlbum(id: string, user: User): { success: boolean; error?: string } {
-    const album = this.data.albums.find((a) => a.id === id);
-    if (!album) return { success: false, error: "រកមិនឃើញ Album នេះទេ។" };
+  public async restoreAlbum(id: string, user: User): Promise<{ success: boolean; error?: string }> {
+    const drizzle = getDrizzleDb();
+    let foundInPg = false;
+    let albumTitle = id;
 
-    album.status = "published";
+    if (drizzle && isPostgresConfigured()) {
+      try {
+        const [pgAlbum] = await drizzle
+          .select()
+          .from(schema.albums)
+          .where(eq(schema.albums.id, id))
+          .limit(1);
+
+        if (pgAlbum) {
+          foundInPg = true;
+          albumTitle = pgAlbum.title;
+          await drizzle
+            .update(schema.albums)
+            .set({
+              status: "published",
+              updatedAt: new Date(),
+            })
+            .where(eq(schema.albums.id, id));
+        }
+      } catch (err) {
+        console.error(`[restoreAlbum]: PostgreSQL update error for album ${id}:`, err);
+        return { success: false, error: "មានបញ្ហាក្នុងការស្តារ Album ក្នុង PostgreSQL។" };
+      }
+    }
+
+    const album = this.data.albums.find((a) => a.id === id);
+    if (album) {
+      album.status = "published";
+      albumTitle = album.title;
+      this.save();
+    }
+
+    if (!album && !foundInPg) {
+      return { success: false, error: "រកមិនឃើញ Album នេះទេ។" };
+    }
+
     this.logActivity({
       userId: user.id,
       userName: user.name,
@@ -1552,21 +1667,8 @@ class Database {
       action: "RESTORE_ALBUM",
       resource: "ALBUM",
       resourceId: id,
-      details: `បានស្តារ Album «${album.title}» ឡើងវិញពីធុងសំរាម`,
+      details: `បានស្តារ Album «${albumTitle}» ឡើងវិញពីធុងសំរាម`,
     });
-    this.save();
-
-    const drizzle = getDrizzleDb();
-    if (drizzle) {
-      drizzle
-        .update(schema.albums)
-        .set({
-          status: "published",
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.albums.id, id))
-        .catch(() => {});
-    }
 
     return { success: true };
   }
@@ -1579,15 +1681,52 @@ class Database {
       return { success: false, error: "មានតែ Super Admin ប៉ុណ្ណោះដែលអាចលុបជាអចិន្ត្រៃយ៍បាន។" };
     }
 
+    const drizzle = getDrizzleDb();
+    let foundInPg = false;
+    let albumTitle = id;
+    let imagesToDelete: Array<{ url: string | null; thumbnailUrl: string | null }> = [];
+
+    if (drizzle && isPostgresConfigured()) {
+      try {
+        const [pgAlbum] = await drizzle
+          .select()
+          .from(schema.albums)
+          .where(eq(schema.albums.id, id))
+          .limit(1);
+
+        if (pgAlbum) {
+          foundInPg = true;
+          albumTitle = pgAlbum.title;
+          const pgImages = await drizzle
+            .select({ url: schema.images.url, thumbnailUrl: schema.images.thumbnailUrl })
+            .from(schema.images)
+            .where(eq(schema.images.albumId, id));
+          imagesToDelete = pgImages;
+        }
+      } catch (err) {
+        console.error(`[PermanentDeleteAlbum]: PostgreSQL lookup error for album ${id}:`, err);
+        return { success: false, error: "មានបញ្ហាក្នុងការស្វែងរក Album ក្នុង PostgreSQL។" };
+      }
+    }
+
     const album = this.data.albums.find((a) => a.id === id);
-    if (!album) return { success: false, error: "រកមិនឃើញ Album នេះទេ។" };
+    if (album) {
+      albumTitle = album.title;
+      const memImages = this.data.images.filter((img) => img.albumId === id);
+      for (const img of memImages) {
+        if (!imagesToDelete.some((i) => i.url === img.url)) {
+          imagesToDelete.push({ url: img.url, thumbnailUrl: img.thumbnailUrl || null });
+        }
+      }
+    }
 
-    // 1. Collect all images belonging to this album
-    const albumImages = this.data.images.filter((img) => img.albumId === id);
+    if (!album && !foundInPg) {
+      return { success: false, error: "រកមិនឃើញ Album នេះទេ។" };
+    }
 
-    // 2. Delete all image files from Storage (Cloudflare R2 / Local Disk)
+    // 1. Delete all image files from Storage (Cloudflare R2 / Local Disk)
     const storage = getStorageProvider();
-    for (const img of albumImages) {
+    for (const img of imagesToDelete) {
       try {
         if (img.url) {
           await storage.deleteImage(img.url);
@@ -1596,30 +1735,17 @@ class Database {
           await storage.deleteImage(img.thumbnailUrl);
         }
       } catch (storageErr) {
-        console.error(
-          `[PermanentDeleteAlbum]: Storage deletion error for image ${img.id}:`,
-          storageErr,
-        );
+        console.error(`[PermanentDeleteAlbum]: Storage deletion error for image:`, storageErr);
       }
     }
 
-    // 3. Delete from Memory State
+    // 2. Delete from Memory State
     this.data.albums = this.data.albums.filter((a) => a.id !== id);
     this.data.images = this.data.images.filter((img) => img.albumId !== id);
-    this.logActivity({
-      userId: user.id,
-      userName: user.name,
-      userRole: user.role,
-      action: "PERMANENT_DELETE_ALBUM",
-      resource: "ALBUM",
-      resourceId: id,
-      details: `បានលុប Album «${album.title}» និងរូបភាពទាំងអស់ក្នុង Album ជាអចិន្ត្រៃយ៍`,
-    });
     this.save();
 
-    // 4. Delete from PostgreSQL Database
-    const drizzle = getDrizzleDb();
-    if (drizzle) {
+    // 3. Delete from PostgreSQL Database
+    if (drizzle && isPostgresConfigured()) {
       try {
         await drizzle.delete(schema.images).where(eq(schema.images.albumId, id));
         await drizzle.delete(schema.albums).where(eq(schema.albums.id, id));
@@ -1635,10 +1761,20 @@ class Database {
       }
     }
 
+    this.logActivity({
+      userId: user.id,
+      userName: user.name,
+      userRole: user.role,
+      action: "PERMANENT_DELETE_ALBUM",
+      resource: "ALBUM",
+      resourceId: id,
+      details: `បានលុប Album «${albumTitle}» និងរូបភាពទាំងអស់ក្នុង Album ជាអចិន្ត្រៃយ៍`,
+    });
+
     return { success: true };
   }
 
-  public deleteAlbum(id: string, user: User): { success: boolean; error?: string } {
+  public deleteAlbum(id: string, user: User): Promise<{ success: boolean; error?: string }> {
     return this.trashAlbum(id, user);
   }
 
