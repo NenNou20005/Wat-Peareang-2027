@@ -9,6 +9,7 @@ import {
   Sparkles,
   FolderKanban,
   Image as ImageIcon,
+  Video,
   Search,
   RefreshCw,
   ShieldAlert,
@@ -34,7 +35,7 @@ export const Route = createFileRoute("/admin/trash")({
 function AdminTrashPage() {
   const { isSuperAdmin, hasPermission } = useAuth();
   const {
-    data = { festivals: [], albums: [], images: [] },
+    data = { festivals: [], albums: [], images: [], videos: [] },
     isLoading: loading,
     refetch: fetchTrash,
   } = useAdminTrash();
@@ -42,11 +43,15 @@ function AdminTrashPage() {
   const permanentDeleteMutation = usePermanentDeleteTrashItem();
 
   const [search, setSearch] = useState("");
-  const [tab, setTab] = useState<"all" | "festivals" | "albums" | "images">("all");
+  const [tab, setTab] = useState<"all" | "festivals" | "albums" | "images" | "videos">("all");
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
 
   // Restore Handlers
-  const handleRestore = async (type: "festival" | "album" | "image", id: string, name: string) => {
+  const handleRestore = async (
+    type: "festival" | "album" | "image" | "video",
+    id: string,
+    name: string,
+  ) => {
     setActionLoadingId(id);
     try {
       await restoreMutation.mutateAsync({ type, id });
@@ -61,7 +66,7 @@ function AdminTrashPage() {
 
   // Permanent Delete Handlers (Super Admin Only)
   const handlePermanentDelete = async (
-    type: "festival" | "album" | "image",
+    type: "festival" | "album" | "image" | "video",
     id: string,
     name: string,
   ) => {
@@ -91,7 +96,10 @@ function AdminTrashPage() {
   };
 
   const totalTrashed =
-    (data?.festivals?.length || 0) + (data?.albums?.length || 0) + (data?.images?.length || 0);
+    (data?.festivals?.length || 0) +
+    (data?.albums?.length || 0) +
+    (data?.images?.length || 0) +
+    (data?.videos?.length || 0);
 
   const query = (search || "").toLowerCase().trim();
 
@@ -123,6 +131,13 @@ function AdminTrashPage() {
     ).toLowerCase();
     const albumId = (i?.albumId || (i as { albumTitle?: string })?.albumTitle || "").toLowerCase();
     const id = (i?.id || "").toLowerCase();
+    return title.includes(query) || albumId.includes(query) || id.includes(query);
+  });
+  const filteredVideos = (data?.videos || []).filter((v) => {
+    if (!query) return true;
+    const title = (v?.title || v?.albumTitle || v?.id || "").toLowerCase();
+    const albumId = (v?.albumId || v?.albumTitle || "").toLowerCase();
+    const id = (v?.id || "").toLowerCase();
     return title.includes(query) || albumId.includes(query) || id.includes(query);
   });
 
@@ -221,6 +236,16 @@ function AdminTrashPage() {
               }`}
             >
               <ImageIcon className="h-3.5 w-3.5" /> រូបភាព ({data.images.length})
+            </button>
+            <button
+              onClick={() => setTab("videos")}
+              className={`rounded-xl px-3 py-1.5 text-xs font-medium transition-all flex items-center gap-1.5 ${
+                tab === "videos"
+                  ? "bg-gold text-primary-foreground shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Video className="h-3.5 w-3.5" /> វីដេអូ ({data?.videos?.length || 0})
             </button>
           </div>
 
@@ -402,11 +427,19 @@ function AdminTrashPage() {
                         key={img.id}
                         className="group relative overflow-hidden rounded-2xl border border-border/80 bg-card shadow-soft"
                       >
-                        <div className="aspect-square w-full overflow-hidden bg-secondary">
+                        <div className="relative aspect-square w-full overflow-hidden bg-secondary/80 flex items-center justify-center">
+                          {/* Ambient Blurred Backdrop */}
+                          <img
+                            src={resolveImageUrl(img.url)}
+                            alt=""
+                            aria-hidden="true"
+                            className="absolute inset-0 h-full w-full object-cover blur-sm scale-110 opacity-30 pointer-events-none"
+                          />
+                          {/* Foreground Natural-Ratio Uncropped Image */}
                           <img
                             src={resolveImageUrl(img.url)}
                             alt={imgTitle}
-                            className="h-full w-full object-cover opacity-75 grayscale transition-all group-hover:grayscale-0 group-hover:opacity-100"
+                            className="relative z-[1] max-h-full max-w-full object-contain opacity-75 grayscale transition-all group-hover:grayscale-0 group-hover:opacity-100"
                             loading="lazy"
                             onError={(e) => {
                               (e.target as HTMLImageElement).src = resolveImageUrl(null);
@@ -423,7 +456,7 @@ function AdminTrashPage() {
                           </p>
                         </div>
 
-                        <div className="absolute inset-0 bg-black/60 opacity-0 transition-opacity group-hover:opacity-100 flex flex-col items-center justify-center gap-2 p-2">
+                        <div className="absolute inset-0 z-[2] bg-black/60 opacity-0 transition-opacity group-hover:opacity-100 flex flex-col items-center justify-center gap-2 p-2">
                           <Button
                             size="sm"
                             onClick={() => handleRestore("image", img.id, imgTitle)}
@@ -442,6 +475,73 @@ function AdminTrashPage() {
                               className="w-full h-7 rounded-xl text-[10px]"
                             >
                               <Trash2 className="mr-1 h-3 w-3" /> លុបដាច់
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Videos Section */}
+            {(tab === "all" || tab === "videos") && filteredVideos.length > 0 && (
+              <div className="space-y-3">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <Video className="h-3.5 w-3.5 text-rose-500" /> វីដេអូក្នុងធុងសំរាម (
+                  {filteredVideos.length})
+                </h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                  {filteredVideos.map((vid) => {
+                    const vidTitle = vid.title || vid.id;
+                    const vidSub = vid.albumTitle || vid.albumId || "";
+                    const sizeInMb = vid.size ? (vid.size / (1024 * 1024)).toFixed(1) : null;
+                    return (
+                      <div
+                        key={vid.id}
+                        className="group relative overflow-hidden rounded-2xl border border-border/80 bg-card shadow-soft flex flex-col justify-between"
+                      >
+                        <div className="relative aspect-video w-full overflow-hidden bg-black flex items-center justify-center">
+                          <video
+                            src={resolveImageUrl(vid.url)}
+                            controls
+                            preload="metadata"
+                            playsInline
+                            className="h-full w-full object-contain"
+                          />
+                        </div>
+
+                        <div className="p-3">
+                          <p className="truncate text-xs font-semibold text-foreground" title={vidTitle}>
+                            {vidTitle}
+                          </p>
+                          <div className="mt-1 flex items-center justify-between text-[10px] text-muted-foreground">
+                            <span className="truncate font-mono">{vidSub}</span>
+                            {sizeInMb && <span className="font-mono shrink-0 ml-2">{sizeInMb} MB</span>}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 border-t border-border/50 p-2.5 bg-muted/20">
+                          <Button
+                            size="sm"
+                            onClick={() => handleRestore("video", vid.id, vidTitle)}
+                            disabled={actionLoadingId === vid.id}
+                            className="flex-1 h-8 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-xs text-white"
+                          >
+                            <RotateCcw className="mr-1 h-3 w-3" /> ស្តារ
+                          </Button>
+
+                          {isSuperAdmin && (
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => handlePermanentDelete("video", vid.id, vidTitle)}
+                              disabled={actionLoadingId === vid.id}
+                              className="h-8 rounded-xl text-xs px-3"
+                              title="លុបជាអចិន្ត្រៃយ៍"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           )}
                         </div>

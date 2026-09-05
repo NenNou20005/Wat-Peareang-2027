@@ -1,25 +1,38 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { db, verifyPassword } from "./db";
+import { db, verifyPassword, hashPassword } from "./db";
 import { checkDbHealth, getDrizzleDb } from "../db/index";
 import * as schema from "../db/schema";
-import { eq, asc, desc, sql } from "drizzle-orm";
+import { eq, asc, desc, sql, and } from "drizzle-orm";
 import { getOrGenerateRequestId, logger } from "./logger";
 import { getStorageProvider } from "./storage/index";
-import { detectImageMagicBytes } from "./validation";
+import { detectImageMagicBytes, detectVideoMagicBytes, LIMITS, sanitizeText } from "./validation";
 import {
   getPostgresFestivals,
   getPostgresYears,
   getPostgresAlbums,
   getPostgresAlbumById,
   getPostgresPhotosForAlbum,
+  getPostgresVideosForAlbum,
   getPostgresArchiveStats,
   searchPostgresArchive,
+  searchPostgresVideos,
   getAdminDashboardMetrics,
   getAdminAlbumsPaginated,
   getAdminImagesPaginated,
+  getDiverseArchiveImages,
+  getAllArchiveImagesForSlideshow,
+  getArchiveAlbumsWithAllImages,
   getAdminTrashItems,
+  validateHierarchyIntegrity,
+  getPostgresEventsForFestivalYear,
+  getPostgresEventById,
+  getPostgresAdminEvents,
+  createPostgresEvent,
+  updatePostgresEvent,
+  deletePostgresEvent,
+  reorderPostgresEvents,
 } from "./queries";
 import {
   authenticateRequest,
@@ -29,8 +42,124 @@ import {
   createClearSessionCookie,
   checkLoginRateLimit,
   resetLoginRateLimit,
+  parseCookies,
 } from "./auth";
-import type { Permission, UserRole } from "../types/auth";
+import { checkRateLimit, resetRateLimit, rateLimitedResponse } from "./rate-limit";
+import type { Permission, UserRole, User } from "../types/auth";
+
+// --- PRIVATE ARCHIVE SESSION REGISTRY (In-memory token store with TTL) ---
+interface PrivateArchiveSession {
+  userId: string;
+  expiresAt: number;
+}
+declare global {
+  var _watPeareangPrivateArchiveSessions: Map<string, PrivateArchiveSession> | undefined;
+}
+const privateArchiveSessions: Map<string, PrivateArchiveSession> =
+  globalThis._watPeareangPrivateArchiveSessions ??
+  (globalThis._watPeareangPrivateArchiveSessions = new Map<string, PrivateArchiveSession>());
+
+function getPrivateArchiveTokenFromRequest(request: Request): string | null {
+  const cookieHeader = request.headers.get("cookie");
+  const cookies = parseCookies(cookieHeader);
+  const sessionCookie = cookies["private_archive_session"];
+  if (sessionCookie) return sessionCookie.trim();
+
+  const authHeader = request.headers.get("authorization");
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return authHeader.substring(7).trim();
+  }
+
+  const customHeader = request.headers.get("x-private-archive-token");
+  if (customHeader) return customHeader.trim();
+
+  return null;
+}
+
+function isPrivateArchiveSessionValid(token: string | null): boolean {
+  if (!token) return false;
+  const session = privateArchiveSessions.get(token);
+  if (!session) return false;
+  if (session.expiresAt <= Date.now()) {
+    privateArchiveSessions.delete(token);
+    return false;
+  }
+  return true;
+}
+
+function isSecureConnection(request?: Request): boolean {
+  if (request) {
+    if (
+      request.url.startsWith("https://") ||
+      request.headers.get("x-forwarded-proto") === "https" ||
+      request.headers.get("x-forwarded-ssl") === "on"
+    ) {
+      return true;
+    }
+    try {
+      const url = new URL(request.url);
+      if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+        return false;
+      }
+    } catch {
+      // fallback
+    }
+  }
+  return process.env["NODE_ENV"] === "production";
+}
+
+function createPrivateSessionCookie(token: string, request?: Request): string {
+  const maxAge = 2 * 60 * 60; // 2 hours
+  const secureFlag = isSecureConnection(request) ? "; Secure" : "";
+  return `private_archive_session=${encodeURIComponent(
+    token,
+  )}; Path=/; HttpOnly; SameSite=Lax${secureFlag}; Max-Age=${maxAge}`;
+}
+
+function createClearPrivateSessionCookie(request?: Request): string {
+  const secureFlag = isSecureConnection(request) ? "; Secure" : "";
+  return `private_archive_session=; Path=/; HttpOnly; SameSite=Lax${secureFlag}; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+}
+
+async function getPrivateArchiveCodeHash(): Promise<string> {
+  const drizzle = getDrizzleDb();
+  if (drizzle) {
+    try {
+      const rows = await drizzle
+        .select()
+        .from(schema.siteSettings)
+        .where(eq(schema.siteSettings.key, "private_archive_code_hash"))
+        .limit(1);
+      if (rows[0]?.value) {
+        return rows[0].value;
+      }
+    } catch (err) {
+      console.warn("[Private Archive Settings Error]:", err);
+    }
+  }
+
+  // Initial provisioning fallback from env or default '2027'
+  const rawInitialCode = process.env["PRIVATE_ARCHIVE_CODE"] || "2027";
+  const initialHash = hashPassword(rawInitialCode);
+
+  if (drizzle) {
+    try {
+      await drizzle
+        .insert(schema.siteSettings)
+        .values({
+          key: "private_archive_code_hash",
+          value: initialHash,
+          description: "Hashed access code for Private Archive",
+        })
+        .onConflictDoNothing();
+    } catch {
+      // ignore conflict
+    }
+  }
+
+  return initialHash;
+}
+
 
 export async function handleApiRequest(request: Request): Promise<Response | null> {
   const url = new URL(request.url);
@@ -881,6 +1010,165 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     }
   }
 
+  // --- 5.5. EVENTS MANAGEMENT (POSTGRESQL AUTHORITATIVE) ---
+  if (pathname.startsWith("/api/admin/events")) {
+    const auth = await requireAuth(request, "manage_albums");
+    if (auth instanceof Response) return auth;
+    const currentUser = auth.user;
+
+    // POST /api/admin/events/reorder
+    if (pathname === "/api/admin/events/reorder" && method === "POST") {
+      try {
+        const body = await request.json();
+        const { eventIds } = body;
+        if (!Array.isArray(eventIds) || eventIds.length === 0) {
+          return json({ success: false, error: "Invalid event IDs array" }, 400);
+        }
+        await reorderPostgresEvents(eventIds);
+        return json({ success: true, message: "បានរៀបលំដាប់ពិធីការដោយជោគជ័យ។" });
+      } catch (err) {
+        logger.error("Failed to reorder events", { error: err });
+        return json({ success: false, error: "Failed to reorder events" }, 500);
+      }
+    }
+
+    // GET /api/admin/events
+    if (pathname === "/api/admin/events" && method === "GET") {
+      const page = Number(url.searchParams.get("page") || "1");
+      const limit = Number(url.searchParams.get("limit") || "50");
+      const search = url.searchParams.get("search") || undefined;
+      const festivalId = url.searchParams.get("festivalId") || undefined;
+      const yearParam = url.searchParams.get("year");
+      const year = yearParam ? Number(yearParam) : undefined;
+
+      try {
+        const result = await getPostgresAdminEvents({
+          search,
+          festivalId,
+          year: isNaN(year as number) ? undefined : year,
+          page,
+          limit,
+        });
+        return json({ success: true, ...result });
+      } catch (err) {
+        logger.error("Failed to fetch admin events", { error: err });
+        return json({ success: false, error: "Failed to fetch events" }, 500);
+      }
+    }
+
+    // POST /api/admin/events
+    if (pathname === "/api/admin/events" && method === "POST") {
+      try {
+        const body = await request.json();
+        const {
+          festivalId,
+          year,
+          nameKh,
+          nameEn,
+          description,
+          eventDate,
+          location,
+          icon,
+          coverImage,
+          status,
+          sortOrder,
+        } = body;
+
+        if (!festivalId || !year || !nameKh || !nameKh.trim()) {
+          return json(
+            {
+              success: false,
+              error: "សូមបំពេញព័ត៌មានចាំបាច់ (ពិធីបុណ្យ, ឆ្នាំ, ឈ្មោះពិធីការជាភាសាខ្មែរ)។",
+            },
+            400,
+          );
+        }
+
+        const created = await createPostgresEvent({
+          festivalId: festivalId.trim(),
+          year: Number(year),
+          nameKh: nameKh.trim(),
+          nameEn: nameEn?.trim() || undefined,
+          description: description?.trim() || undefined,
+          eventDate: eventDate?.trim() || undefined,
+          location: location?.trim() || "វត្តពារាំង",
+          icon: icon?.trim() || "🎉",
+          coverImage: coverImage?.trim() || undefined,
+          status: status || "published",
+          sortOrder: sortOrder ? Number(sortOrder) : 0,
+        });
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "CREATE_EVENT",
+          resource: "EVENT",
+          resourceId: created.id,
+          details: `បានបង្កើតពិធីការថ្មី «${created.nameKh}» សម្រាប់ ${created.festivalId} ឆ្នាំ ${created.year}`,
+          ip,
+        });
+
+        return json({ success: true, event: created }, 201);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Failed to create event";
+        return json({ success: false, error: msg }, 400);
+      }
+    }
+
+    // PUT /api/admin/events/:id
+    if (pathname.startsWith("/api/admin/events/") && method === "PUT") {
+      const eventId = pathname.replace("/api/admin/events/", "").trim();
+      try {
+        const body = await request.json();
+        const updated = await updatePostgresEvent(eventId, body);
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "UPDATE_EVENT",
+          resource: "EVENT",
+          resourceId: eventId,
+          details: `បានកែសម្រួលពិធីការ «${updated.nameKh}»`,
+          ip,
+        });
+
+        return json({ success: true, event: updated });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Failed to update event";
+        return json({ success: false, error: msg }, 400);
+      }
+    }
+
+    // DELETE /api/admin/events/:id
+    if (pathname.startsWith("/api/admin/events/") && method === "DELETE") {
+      const eventId = pathname.replace("/api/admin/events/", "").trim();
+      try {
+        await deletePostgresEvent(eventId);
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "DELETE_EVENT",
+          resource: "EVENT",
+          resourceId: eventId,
+          details: `បានលុបពិធីការ (ID: ${eventId}) (Albums ត្រូវបានរក្សាទុកជាធម្មតា)`,
+          ip,
+        });
+
+        return json({
+          success: true,
+          message: "បានលុបពិធីការដោយជោគជ័យ (Albums និងរូបថតត្រូវបានរក្សាទុកជាធម្មតា)។",
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Failed to delete event";
+        return json({ success: false, error: msg }, 500);
+      }
+    }
+  }
+
   // --- 6. ALBUMS MANAGEMENT (WITH PAGINATION & FILTERS) ---
   if (pathname.startsWith("/api/admin/albums")) {
     if (pathname === "/api/admin/albums" && method === "GET") {
@@ -916,7 +1204,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     if (pathname === "/api/admin/albums" && method === "POST") {
       try {
         const body = await request.json();
-        const { festivalId, year, location, title, description, coverImage } = body;
+        const { festivalId, year, eventId, location, title, description, coverImage } = body;
         const numYear = Number(year);
         if (!festivalId || !numYear || isNaN(numYear) || !title || !title.trim()) {
           return json(
@@ -926,6 +1214,18 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
             },
             400,
           );
+        }
+
+        const cleanEventId = eventId && typeof eventId === "string" && eventId.trim() ? eventId.trim() : null;
+
+        // Validate hierarchy integrity
+        const validation = await validateHierarchyIntegrity({
+          festivalId,
+          year: numYear,
+          eventId: cleanEventId,
+        });
+        if (!validation.valid) {
+          return json({ success: false, error: validation.error || "Hierarchy validation failed" }, 400);
         }
 
         const drizzle = getDrizzleDb();
@@ -963,6 +1263,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
             id: candidateId,
             festivalId,
             year: numYear,
+            eventId: cleanEventId,
             title: title.trim(),
             location: (location && location.trim()) || "វត្តពារាំង",
             description: (description && description.trim()) || null,
@@ -1488,6 +1789,338 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     }
   }
 
+  // --- 7.5. VIDEOS MANAGEMENT & UPLOAD ---
+  if (pathname.startsWith("/api/admin/videos")) {
+    // GET /api/admin/videos (List public videos by album or paginated)
+    if (pathname === "/api/admin/videos" && method === "GET") {
+      const auth = await requireAuth(request);
+      if (auth instanceof Response) return auth;
+
+      const albumId = url.searchParams.get("albumId") || undefined;
+      const status = url.searchParams.get("status") || "published";
+
+      const drizzle = getDrizzleDb();
+      if (!drizzle) return json({ success: false, error: "Database unavailable" }, 503);
+
+      try {
+        const conditions = [];
+        if (albumId) {
+          conditions.push(eq(schema.videos.albumId, albumId));
+        }
+        if (status !== "all") {
+          conditions.push(eq(schema.videos.status, status));
+        }
+
+        const videoList = await drizzle
+          .select()
+          .from(schema.videos)
+          .where(conditions.length > 0 ? and(...conditions) : undefined)
+          .orderBy(desc(schema.videos.createdAt));
+
+        return json({ success: true, data: videoList });
+      } catch (err) {
+        logger.error("Failed to list admin videos", { error: err });
+        return json({ success: false, error: "Failed to load videos" }, 500);
+      }
+    }
+
+    // POST /api/admin/videos/upload (Binary multipart video upload)
+    if (pathname === "/api/admin/videos/upload" && method === "POST") {
+      const auth = await requireAuth(request, "upload_images");
+      if (auth instanceof Response) return auth;
+      const currentUser = auth.user;
+
+      // Rate limiting (reuse upload scope)
+      const rl = checkRateLimit("upload", ip);
+      if (!rl.allowed) {
+        return rateLimitedResponse(rl);
+      }
+
+      // Early content-length check (100MB + 1MB multipart overhead)
+      const declaredLength = Number(request.headers.get("content-length") || "0");
+      if (declaredLength > LIMITS.videoBytes + 1024 * 1024) {
+        return json({ success: false, error: "ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 100MB)។" }, 413);
+      }
+
+      try {
+        const formData = await request.formData();
+        const file = formData.get("file") as File | null;
+        const albumId = (formData.get("albumId") as string) || "";
+        const title = (formData.get("title") as string) || "";
+        const description = (formData.get("description") as string) || "";
+        const durationParam = formData.get("duration");
+        const duration = durationParam ? Number(durationParam) : null;
+        const widthParam = formData.get("width");
+        const width = widthParam ? Number(widthParam) : null;
+        const heightParam = formData.get("height");
+        const height = heightParam ? Number(heightParam) : null;
+
+        if (!file || typeof file.arrayBuffer !== "function") {
+          return json({ success: false, error: "សូមជ្រើសរើសឯកសារវីដេអូដែលត្រូវ Upload។" }, 400);
+        }
+
+        if (!albumId) {
+          return json({ success: false, error: "សូមជ្រើសរើស Album គោលដៅ។" }, 400);
+        }
+
+        if (file.size > LIMITS.videoBytes) {
+          return json({ success: false, error: "ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 100MB)។" }, 413);
+        }
+
+        // Validate target album exists in PostgreSQL
+        const drizzle = getDrizzleDb();
+        if (drizzle) {
+          const [foundAlbum] = await drizzle
+            .select({ id: schema.albums.id })
+            .from(schema.albums)
+            .where(eq(schema.albums.id, albumId))
+            .limit(1);
+          if (!foundAlbum) {
+            return json({ success: false, error: "រកមិនឃើញ Album គោលដៅក្នុងទិន្នន័យឡើយ។" }, 404);
+          }
+        }
+
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const detectedMime = detectVideoMagicBytes(buffer);
+        if (!detectedMime) {
+          return json(
+            {
+              success: false,
+              error: "ប្រភេទឯកសារមិនត្រឹមត្រូវឡើយ។ អនុញ្ញាតតែវីដេអូ MP4, WebM, QuickTime (MOV) ប៉ុណ្ណោះ។",
+            },
+            400,
+          );
+        }
+
+        const storage = getStorageProvider();
+        let storedResult: { url: string; filename?: string; r2Key?: string; size: number; mimeType: string };
+
+        if (typeof storage.saveVideo === "function") {
+          storedResult = await storage.saveVideo({
+            buffer,
+            originalFilename: file.name,
+            mimeType: detectedMime,
+          });
+        } else {
+          return json({ success: false, error: "Storage driver does not support video saving" }, 500);
+        }
+
+        const newVideoId = `vid-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+        const safeTitle = sanitizeText(title, 200) || file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
+        const safeDesc = sanitizeText(description, 2000);
+
+        try {
+          if (drizzle) {
+            await drizzle.insert(schema.videos).values({
+              id: newVideoId,
+              albumId,
+              title: safeTitle,
+              description: safeDesc || null,
+              filename: file.name,
+              mimeType: detectedMime,
+              r2Key: storedResult.r2Key || storedResult.filename || null,
+              url: storedResult.url,
+              thumbnailUrl: null,
+              size: storedResult.size,
+              duration: duration && !isNaN(duration) ? duration : null,
+              width: width && !isNaN(width) ? width : null,
+              height: height && !isNaN(height) ? height : null,
+              status: "published",
+              uploadedBy: currentUser.id,
+            });
+          }
+
+          db.logActivity({
+            userId: currentUser.id,
+            userName: currentUser.name,
+            userRole: currentUser.role,
+            action: "UPLOAD_VIDEO",
+            resource: "VIDEO",
+            resourceId: newVideoId,
+            details: `បានបង្ហោះវីដេអូ «${safeTitle}» (${Math.round(storedResult.size / (1024 * 1024))}MB) ចូល Album ${albumId}`,
+            ip,
+          });
+
+          return json(
+            {
+              success: true,
+              data: {
+                id: newVideoId,
+                albumId,
+                filename: file.name,
+                mimeType: detectedMime,
+                size: storedResult.size,
+                title: safeTitle,
+                description: safeDesc,
+                url: storedResult.url,
+              },
+              message: "បានបង្ហោះវីដេអូដោយជោគជ័យ!",
+            },
+            201,
+          );
+        } catch (dbErr) {
+          const keyToDelete = storedResult.r2Key || storedResult.filename;
+          if (keyToDelete && typeof storage.deleteVideo === "function") {
+            await storage.deleteVideo(keyToDelete).catch(() => {});
+          }
+          logger.error("Failed to insert video record", { error: dbErr });
+          return json({ success: false, error: "មានបញ្ហាក្នុងការរក្សាទុកទិន្នន័យវីដេអូ។" }, 500);
+        }
+      } catch (err) {
+        logger.error("Unexpected error during video upload", { error: err });
+        return json({ success: false, error: "មានបញ្ហាក្នុងដំណើរការ Upload វីដេអូ។" }, 500);
+      }
+    }
+
+    // POST /api/admin/videos/:id/trash (Soft Delete Video)
+    if (
+      pathname.startsWith("/api/admin/videos/") &&
+      pathname.endsWith("/trash") &&
+      method === "POST"
+    ) {
+      const auth = await requireAuth(request, "delete_images");
+      if (auth instanceof Response) return auth;
+      const currentUser = auth.user;
+
+      const targetId = pathname.replace("/api/admin/videos/", "").replace("/trash", "").trim();
+      const drizzle = getDrizzleDb();
+      if (!drizzle) return json({ success: false, error: "Database unavailable" }, 503);
+
+      try {
+        const [existing] = await drizzle
+          .select()
+          .from(schema.videos)
+          .where(eq(schema.videos.id, targetId))
+          .limit(1);
+
+        if (!existing) {
+          return json({ success: false, error: "រកមិនឃើញវីដេអូនេះទេ។" }, 404);
+        }
+
+        await drizzle
+          .update(schema.videos)
+          .set({ status: "trashed", deletedAt: new Date(), updatedAt: new Date() })
+          .where(eq(schema.videos.id, targetId));
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "TRASH_VIDEO",
+          resource: "VIDEO",
+          resourceId: targetId,
+          details: `បានផ្លាស់ទីវីដេអូ «${existing.title}» ទៅកាន់ធុងសំរាម`,
+          ip,
+        });
+
+        return json({ success: true, message: "បានផ្លាស់ទីវីដេអូទៅកាន់ធុងសំរាមរួចរាល់។" });
+      } catch (err) {
+        logger.error("Failed to trash video", { error: err });
+        return json({ success: false, error: "Failed to trash video" }, 500);
+      }
+    }
+
+    // POST /api/admin/videos/:id/restore (Restore Video from Trash)
+    if (
+      pathname.startsWith("/api/admin/videos/") &&
+      pathname.endsWith("/restore") &&
+      method === "POST"
+    ) {
+      const auth = await requireAuth(request, "manage_trash");
+      if (auth instanceof Response) return auth;
+      const currentUser = auth.user;
+
+      const targetId = pathname.replace("/api/admin/videos/", "").replace("/restore", "").trim();
+      const drizzle = getDrizzleDb();
+      if (!drizzle) return json({ success: false, error: "Database unavailable" }, 503);
+
+      try {
+        const [existing] = await drizzle
+          .select()
+          .from(schema.videos)
+          .where(eq(schema.videos.id, targetId))
+          .limit(1);
+
+        if (!existing) {
+          return json({ success: false, error: "រកមិនឃើញវីដេអូនេះទេ។" }, 404);
+        }
+
+        await drizzle
+          .update(schema.videos)
+          .set({ status: "published", deletedAt: null, updatedAt: new Date() })
+          .where(eq(schema.videos.id, targetId));
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "RESTORE_VIDEO",
+          resource: "VIDEO",
+          resourceId: targetId,
+          details: `បានស្តារវីដេអូ «${existing.title}» ឡើងវិញ`,
+          ip,
+        });
+
+        return json({ success: true, message: "បានស្តារវីដេអូឡើងវិញដោយជោគជ័យ។" });
+      } catch (err) {
+        logger.error("Failed to restore video", { error: err });
+        return json({ success: false, error: "Failed to restore video" }, 500);
+      }
+    }
+
+    // DELETE /api/admin/videos/:id (Permanent Delete or Soft Delete)
+    if (
+      pathname.startsWith("/api/admin/videos/") &&
+      !pathname.endsWith("/trash") &&
+      !pathname.endsWith("/restore") &&
+      method === "DELETE"
+    ) {
+      const auth = await requireAuth(request, "delete_images");
+      if (auth instanceof Response) return auth;
+      const currentUser = auth.user;
+
+      const targetId = pathname.replace("/api/admin/videos/", "").trim();
+      const drizzle = getDrizzleDb();
+      if (!drizzle) return json({ success: false, error: "Database unavailable" }, 503);
+
+      try {
+        const [existing] = await drizzle
+          .select()
+          .from(schema.videos)
+          .where(eq(schema.videos.id, targetId))
+          .limit(1);
+
+        if (!existing) {
+          return json({ success: false, error: "រកមិនឃើញវីដេអូនេះទេ។" }, 404);
+        }
+
+        // Clean up storage file if r2Key exists
+        const storage = getStorageProvider();
+        if (existing.r2Key && typeof storage.deleteVideo === "function") {
+          await storage.deleteVideo(existing.r2Key).catch(() => {});
+        }
+
+        await drizzle.delete(schema.videos).where(eq(schema.videos.id, targetId));
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "DELETE_VIDEO",
+          resource: "VIDEO",
+          resourceId: targetId,
+          details: `បានលុបវីដេអូ «${existing.title}» ជាអចិន្ត្រៃយ៍`,
+          ip,
+        });
+
+        return json({ success: true, message: "បានលុបវីដេអូជោគជ័យ!" });
+      } catch (err) {
+        logger.error("Failed to delete video", { error: err });
+        return json({ success: false, error: "Failed to delete video" }, 500);
+      }
+    }
+  }
+
   // --- 8. TRASH & RESTORE MANAGEMENT ---
   if (pathname === "/api/admin/trash" && method === "GET") {
     const auth = await requireAuth(request, "manage_trash");
@@ -1695,6 +2328,222 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     return json({ success: true, data: db.getAdminShortcut() });
   }
 
+  // --- HOMEPAGE HERO SETTINGS ---
+  // Public GET for Homepage
+  if (pathname === "/api/site-settings/hero" && method === "GET") {
+    const heroImage = await db.getSiteSettingAsync("homepage_hero_image");
+    return json({ success: true, data: { heroImage } });
+  }
+
+  // Admin GET for Settings Page
+  if (pathname === "/api/admin/settings/hero" && method === "GET") {
+    const auth = await requireAuth(request);
+    if (auth instanceof Response) return auth;
+    const heroImage = await db.getSiteSettingAsync("homepage_hero_image");
+    return json({ success: true, data: { heroImage } });
+  }
+
+  // Admin POST (Upload image from PC & set as Homepage Hero)
+  if (pathname === "/api/admin/settings/hero" && method === "POST") {
+    const auth = await requireAuth(request);
+    if (auth instanceof Response) return auth;
+    const currentUser = auth.user;
+
+    try {
+      const formData = await request.formData();
+      const file = formData.get("file") as File | null;
+
+      if (!file || typeof file.arrayBuffer !== "function") {
+        return json({ success: false, error: "សូមជ្រើសរើសឯកសាររូបភាពដែលត្រូវ Upload។" }, 400);
+      }
+
+      const MAX_SIZE = 15 * 1024 * 1024; // 15MB
+      if (file.size > MAX_SIZE) {
+        return json({ success: false, error: "ទំហំរូបភាពធំជាងកំណត់ (អតិបរមា 15MB)។" }, 413);
+      }
+
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const detectedMime = detectImageMagicBytes(buffer);
+      if (!detectedMime) {
+        return json(
+          {
+            success: false,
+            error: "ប្រភេទឯកសារមិនត្រឹមត្រូវឡើយ។ អនុញ្ញាតតែរូបភាព JPG, PNG, WEBP ប៉ុណ្ណោះ។",
+          },
+          400,
+        );
+      }
+
+      const storage = getStorageProvider();
+      const stored = await storage.saveImage({
+        buffer,
+        originalFilename: file.name,
+        mimeType: detectedMime,
+      });
+
+      await db.setSiteSettingAsync(
+        "homepage_hero_image",
+        stored.url,
+        "Homepage Hero Banner Image",
+      );
+
+      db.logActivity({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        userRole: currentUser.role,
+        action: "UPDATE_HERO_IMAGE",
+        resource: "SETTINGS",
+        resourceId: "homepage-hero",
+        details: `បានផ្លាស់ប្តូររូបភាព Homepage Hero: ${stored.url}`,
+        ip,
+      });
+
+      return json({
+        success: true,
+        message: "បានផ្លាស់ប្តូររូបភាព Hero ដោយជោគជ័យ!",
+        data: { heroImage: stored.url },
+      });
+    } catch (err) {
+      console.error("[Hero Upload Error]:", err);
+      const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការ Upload រូបភាព Hero។";
+      return json({ success: false, error: msg }, 500);
+    }
+  }
+
+  // Admin DELETE (Reset Homepage Hero to Default)
+  if (pathname === "/api/admin/settings/hero" && method === "DELETE") {
+    const auth = await requireAuth(request);
+    if (auth instanceof Response) return auth;
+    const currentUser = auth.user;
+
+    await db.deleteSiteSettingAsync("homepage_hero_image");
+
+    db.logActivity({
+      userId: currentUser.id,
+      userName: currentUser.name,
+      userRole: currentUser.role,
+      action: "RESET_HERO_IMAGE",
+      resource: "SETTINGS",
+      resourceId: "homepage-hero",
+      details: "បានកំណត់រូបភាព Homepage Hero ទៅកាន់ Default វិញ",
+      ip,
+    });
+
+    return json({
+      success: true,
+      message: "បានកំណត់រូបភាព Hero ទៅ Default វិញជោគជ័យ!",
+      data: { heroImage: null },
+    });
+  }
+
+  // --- DEVELOPER PROFILE IMAGE SETTINGS ---
+  // Public GET for Developer Page
+  if (pathname === "/api/site-settings/developer-profile" && method === "GET") {
+    const profileImage = await db.getSiteSettingAsync("developer_profile_image");
+    return json({ success: true, data: { profileImage } });
+  }
+
+  // Admin GET for Settings Page
+  if (pathname === "/api/admin/settings/developer-profile" && method === "GET") {
+    const auth = await requireAuth(request);
+    if (auth instanceof Response) return auth;
+    const profileImage = await db.getSiteSettingAsync("developer_profile_image");
+    return json({ success: true, data: { profileImage } });
+  }
+
+  // Admin POST (Upload image from PC & set as Developer Profile)
+  if (pathname === "/api/admin/settings/developer-profile" && method === "POST") {
+    const auth = await requireAuth(request);
+    if (auth instanceof Response) return auth;
+    const currentUser = auth.user;
+
+    try {
+      const formData = await request.formData();
+      const file = formData.get("file") as File | null;
+
+      if (!file || typeof file.arrayBuffer !== "function") {
+        return json({ success: false, error: "សូមជ្រើសរើសឯកសាររូបភាពដែលត្រូវ Upload។" }, 400);
+      }
+
+      const MAX_SIZE = 15 * 1024 * 1024; // 15MB
+      if (file.size > MAX_SIZE) {
+        return json({ success: false, error: "ទំហំរូបភាពធំជាងកំណត់ (អតិបរមា 15MB)។" }, 413);
+      }
+
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const detectedMime = detectImageMagicBytes(buffer);
+      if (!detectedMime) {
+        return json(
+          {
+            success: false,
+            error: "ប្រភេទឯកសារមិនត្រឹមត្រូវឡើយ។ អនុញ្ញាតតែរូបភាព JPG, PNG, WEBP ប៉ុណ្ណោះ។",
+          },
+          400,
+        );
+      }
+
+      const storage = getStorageProvider();
+      const stored = await storage.saveImage({
+        buffer,
+        originalFilename: file.name,
+        mimeType: detectedMime,
+      });
+
+      await db.setSiteSettingAsync(
+        "developer_profile_image",
+        stored.url,
+        "Developer Profile Photo",
+      );
+
+      db.logActivity({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        userRole: currentUser.role,
+        action: "UPDATE_DEVELOPER_PROFILE_IMAGE",
+        resource: "SETTINGS",
+        resourceId: "developer-profile-photo",
+        details: `បានផ្លាស់ប្តូររូបថត Developer Profile: ${stored.url}`,
+        ip,
+      });
+
+      return json({
+        success: true,
+        message: "បានផ្លាស់ប្តូររូបថត Profile ដោយជោគជ័យ!",
+        data: { profileImage: stored.url },
+      });
+    } catch (err) {
+      console.error("[Developer Profile Upload Error]:", err);
+      const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការ Upload រូបភាព Profile។";
+      return json({ success: false, error: msg }, 500);
+    }
+  }
+
+  // Admin DELETE (Reset Developer Profile to Default)
+  if (pathname === "/api/admin/settings/developer-profile" && method === "DELETE") {
+    const auth = await requireAuth(request);
+    if (auth instanceof Response) return auth;
+    const currentUser = auth.user;
+
+    await db.deleteSiteSettingAsync("developer_profile_image");
+
+    db.logActivity({
+      userId: currentUser.id,
+      userName: currentUser.name,
+      userRole: currentUser.role,
+      action: "RESET_DEVELOPER_PROFILE_IMAGE",
+      resource: "SETTINGS",
+      resourceId: "developer-profile-photo",
+      details: "បានកំណត់រូបថត Developer Profile ទៅកាន់ Default វិញ",
+      ip,
+    });
+
+    return json({
+      success: true,
+      message: "បានកំណត់រូបថត Profile ទៅ Default វិញជោគជ័យ!",
+      data: { profileImage: null },
+    });
+  }
+
   // --- 11. SYSTEM & DATABASE STATUS ENDPOINTS (SUPER ADMIN) ---
   if (pathname === "/api/admin/system/database-status" && method === "GET") {
     const authResult = await requireSuperAdmin(request);
@@ -1744,6 +2593,1065 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     }
   }
 
+  // --- 11.5 PRIVATE ARCHIVE ENDPOINTS ---
+
+  const requirePrivateArchiveAuth = async (): Promise<{ user: User } | Response> => {
+    const auth = await requireAuth(request, "manage_albums");
+    if (auth instanceof Response) return auth;
+
+    const privToken = getPrivateArchiveTokenFromRequest(request);
+    if (!isPrivateArchiveSessionValid(privToken)) {
+      return json(
+        {
+          success: false,
+          code: "PRIVATE_ARCHIVE_LOCKED",
+          error: "បណ្ណសារសម្ងាត់ត្រូវបានចាក់សោ។ សូមបញ្ចូលលេខកូដសម្ងាត់ដើម្បីដោះសោ។",
+        },
+        401,
+        {
+          "Set-Cookie": createClearPrivateSessionCookie(request),
+        },
+      );
+    }
+
+    return { user: auth.user };
+  };
+
+  // POST /api/admin/private-archive/unlock
+  if (pathname === "/api/admin/private-archive/unlock" && method === "POST") {
+    // 1. Rate-limit check (anti brute-force: 5 attempts per 15 minutes)
+    const rl = checkRateLimit("private_unlock", ip);
+    if (!rl.allowed) {
+      return json(
+        {
+          success: false,
+          error: `ការប៉ុនប៉ងច្រើនដងពេក។ សូមរង់ចាំ ${rl.retryAfterSeconds} វិនាទីទៀត មុនព្យាយាមម្តងទៀត។`,
+        },
+        429,
+        { "Retry-After": String(rl.retryAfterSeconds) },
+      );
+    }
+
+    // 2. Admin Authentication
+    const auth = await requireAuth(request, "manage_albums");
+    if (auth instanceof Response) return auth;
+    const currentUser = auth.user;
+
+    try {
+      const body = await request.json();
+      const code = typeof body.code === "string" ? body.code.trim() : "";
+      if (!code) {
+        return json({ success: false, error: "សូមបញ្ចូលលេខកូដសម្ងាត់។" }, 400);
+      }
+
+      const storedHash = await getPrivateArchiveCodeHash();
+      const isMatch = verifyPassword(code, storedHash);
+
+      if (!isMatch) {
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "PRIVATE_ARCHIVE_UNLOCK_FAILED",
+          resource: "PRIVATE_ARCHIVE",
+          details: "ការប៉ុនប៉ងដោះសោបណ្ណសារសម្ងាត់បរាជ័យ (Wrong code)",
+          ip,
+        });
+        return json({ success: false, error: "លេខកូដសម្ងាត់មិនត្រឹមត្រូវឡើយ។" }, 401);
+      }
+
+      // Reset rate limit on success
+      resetRateLimit("private_unlock", ip);
+
+      // Create new private session token (2 hours TTL)
+      const token = crypto.randomBytes(32).toString("hex");
+      privateArchiveSessions.set(token, {
+        userId: currentUser.id,
+        expiresAt: Date.now() + 2 * 60 * 60 * 1000,
+      });
+
+      db.logActivity({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        userRole: currentUser.role,
+        action: "PRIVATE_ARCHIVE_UNLOCK_SUCCESS",
+        resource: "PRIVATE_ARCHIVE",
+        details: "បានដោះសោបណ្ណសារសម្ងាត់ជោគជ័យ",
+        ip,
+      });
+
+      return json(
+        { success: true, message: "ដោះសោបណ្ណសារសម្ងាត់ជោគជ័យ!", token },
+        200,
+        {
+          "Set-Cookie": createPrivateSessionCookie(token, request),
+        },
+      );
+    } catch {
+      return json({ success: false, error: "ទិន្នន័យមិនត្រឹមត្រូវ។" }, 400);
+    }
+  }
+
+  // GET /api/admin/private-archive/session
+  if (pathname === "/api/admin/private-archive/session" && method === "GET") {
+    const auth = await requireAuth(request, "manage_albums");
+    if (auth instanceof Response) return auth;
+
+    const token = getPrivateArchiveTokenFromRequest(request);
+    const unlocked = isPrivateArchiveSessionValid(token);
+    return json({ success: true, unlocked });
+  }
+
+  // POST /api/admin/private-archive/lock
+  if (pathname === "/api/admin/private-archive/lock" && method === "POST") {
+    const auth = await requireAuth(request, "manage_albums");
+    if (auth instanceof Response) return auth;
+    const currentUser = auth.user;
+
+    const token = getPrivateArchiveTokenFromRequest(request);
+    if (token) {
+      privateArchiveSessions.delete(token);
+    }
+
+    db.logActivity({
+      userId: currentUser.id,
+      userName: currentUser.name,
+      userRole: currentUser.role,
+      action: "PRIVATE_ARCHIVE_LOCK",
+      resource: "PRIVATE_ARCHIVE",
+      details: "បានចាក់សោបណ្ណសារសម្ងាត់វិញ",
+      ip,
+    });
+
+    return json(
+      { success: true, locked: true, message: "បានចាក់សោបណ្ណសារសម្ងាត់រួចរាល់។" },
+      200,
+      {
+        "Set-Cookie": createClearPrivateSessionCookie(request),
+      },
+    );
+  }
+
+  // GET /api/admin/private-archive/albums
+  if (pathname === "/api/admin/private-archive/albums" && method === "GET") {
+    const privAuth = await requirePrivateArchiveAuth();
+    if (privAuth instanceof Response) return privAuth;
+
+    const drizzle = getDrizzleDb();
+    if (!drizzle) {
+      return json({ success: true, data: [] });
+    }
+
+    try {
+      const rows = await drizzle
+        .select({
+          album: schema.privateAlbums,
+          realCount: sql<number>`(
+            SELECT count(*)::int FROM ${schema.privateImages}
+            WHERE ${schema.privateImages.privateAlbumId} = ${schema.privateAlbums.id}
+          )`,
+          realVideoCount: sql<number>`(
+            SELECT count(*)::int FROM ${schema.privateVideos}
+            WHERE ${schema.privateVideos.privateAlbumId} = ${schema.privateAlbums.id}
+          )`,
+          firstImageId: sql<string | null>`(
+            SELECT ${schema.privateImages.id} FROM ${schema.privateImages}
+            WHERE ${schema.privateImages.privateAlbumId} = ${schema.privateAlbums.id}
+            ORDER BY ${schema.privateImages.createdAt} ASC
+            LIMIT 1
+          )`,
+        })
+        .from(schema.privateAlbums)
+        .orderBy(desc(schema.privateAlbums.createdAt));
+
+      const albums = rows.map((r) => ({
+        id: r.album.id,
+        title: r.album.title,
+        description: r.album.description,
+        coverKey: r.album.coverKey,
+        coverUrl: r.firstImageId
+          ? `/api/admin/private-archive/images/${r.firstImageId}/file`
+          : null,
+        photoCount: Number(r.realCount ?? r.album.photoCount ?? 0),
+        videoCount: Number(r.realVideoCount ?? 0),
+        firstImageId: r.firstImageId,
+        createdAt: r.album.createdAt.toISOString(),
+        updatedAt: r.album.updatedAt.toISOString(),
+      }));
+
+      return json({ success: true, data: albums });
+    } catch (err) {
+      logger.error("Failed to fetch private albums", { error: err });
+      return json({ success: false, error: "Failed to fetch private albums" }, 500);
+    }
+  }
+
+  // POST /api/admin/private-archive/albums
+  if (pathname === "/api/admin/private-archive/albums" && method === "POST") {
+    const privAuth = await requirePrivateArchiveAuth();
+    if (privAuth instanceof Response) return privAuth;
+    const currentUser = privAuth.user;
+
+    const drizzle = getDrizzleDb();
+    if (!drizzle) return json({ success: false, error: "Database not available" }, 500);
+
+    try {
+      const body = await request.json();
+      const title = typeof body.title === "string" ? body.title.trim() : "";
+      const description = typeof body.description === "string" ? body.description.trim() : "";
+
+      if (!title) {
+        return json({ success: false, error: "សូមបញ្ចូលចំណងជើង Album សម្ងាត់។" }, 400);
+      }
+
+      const newAlbumId = `palbum-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+      const [inserted] = await drizzle
+        .insert(schema.privateAlbums)
+        .values({
+          id: newAlbumId,
+          title,
+          description: description || null,
+          photoCount: 0,
+          createdBy: currentUser.id,
+        })
+        .returning();
+
+      db.logActivity({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        userRole: currentUser.role,
+        action: "CREATE_PRIVATE_ALBUM",
+        resource: "PRIVATE_ALBUM",
+        resourceId: newAlbumId,
+        details: `បានបង្កើត Album សម្ងាត់ «${title}»`,
+        ip,
+      });
+
+      return json({ success: true, data: inserted }, 201);
+    } catch (err) {
+      logger.error("Failed to create private album", { error: err });
+      return json({ success: false, error: "មានបញ្ហាក្នុងការបង្កើត Album សម្ងាត់។" }, 500);
+    }
+  }
+
+  // GET /api/admin/private-archive/albums/:id
+  if (
+    pathname.startsWith("/api/admin/private-archive/albums/") &&
+    method === "GET" &&
+    !pathname.includes("/images")
+  ) {
+    const privAuth = await requirePrivateArchiveAuth();
+    if (privAuth instanceof Response) return privAuth;
+
+    const albumId = pathname.replace("/api/admin/private-archive/albums/", "").trim();
+    const drizzle = getDrizzleDb();
+    if (!drizzle) return json({ success: false, error: "Database not available" }, 500);
+
+    try {
+      const [album] = await drizzle
+        .select()
+        .from(schema.privateAlbums)
+        .where(eq(schema.privateAlbums.id, albumId))
+        .limit(1);
+
+      if (!album) {
+        return json({ success: false, error: "រកមិនឃើញ Album សម្ងាត់នេះទេ។" }, 404);
+      }
+
+      const [images, videos] = await Promise.all([
+        drizzle
+          .select({
+            id: schema.privateImages.id,
+            privateAlbumId: schema.privateImages.privateAlbumId,
+            filename: schema.privateImages.filename,
+            mimeType: schema.privateImages.mimeType,
+            size: schema.privateImages.size,
+            width: schema.privateImages.width,
+            height: schema.privateImages.height,
+            title: schema.privateImages.title,
+            description: schema.privateImages.description,
+            createdAt: schema.privateImages.createdAt,
+          })
+          .from(schema.privateImages)
+          .where(eq(schema.privateImages.privateAlbumId, albumId))
+          .orderBy(desc(schema.privateImages.createdAt)),
+        drizzle
+          .select({
+            id: schema.privateVideos.id,
+            privateAlbumId: schema.privateVideos.privateAlbumId,
+            filename: schema.privateVideos.filename,
+            mimeType: schema.privateVideos.mimeType,
+            size: schema.privateVideos.size,
+            duration: schema.privateVideos.duration,
+            width: schema.privateVideos.width,
+            height: schema.privateVideos.height,
+            title: schema.privateVideos.title,
+            description: schema.privateVideos.description,
+            createdAt: schema.privateVideos.createdAt,
+          })
+          .from(schema.privateVideos)
+          .where(eq(schema.privateVideos.privateAlbumId, albumId))
+          .orderBy(desc(schema.privateVideos.createdAt)),
+      ]);
+
+      return json({
+        success: true,
+        data: {
+          album: {
+            ...album,
+            photoCount: images.length,
+            videoCount: videos.length,
+            createdAt: album.createdAt.toISOString(),
+            updatedAt: album.updatedAt.toISOString(),
+          },
+          images: images.map((img) => ({
+            ...img,
+            createdAt: img.createdAt.toISOString(),
+            fileUrl: `/api/admin/private-archive/images/${img.id}/file`,
+          })),
+          videos: videos.map((vid) => ({
+            ...vid,
+            createdAt: vid.createdAt.toISOString(),
+            fileUrl: `/api/admin/private-archive/videos/${vid.id}/file`,
+          })),
+        },
+      });
+    } catch (err) {
+      logger.error("Failed to fetch private album details", { error: err });
+      return json({ success: false, error: "Failed to fetch private album details" }, 500);
+    }
+  }
+
+  // PUT /api/admin/private-archive/albums/:id
+  if (pathname.startsWith("/api/admin/private-archive/albums/") && method === "PUT") {
+    const privAuth = await requirePrivateArchiveAuth();
+    if (privAuth instanceof Response) return privAuth;
+    const currentUser = privAuth.user;
+
+    const albumId = pathname.replace("/api/admin/private-archive/albums/", "").trim();
+    const drizzle = getDrizzleDb();
+    if (!drizzle) return json({ success: false, error: "Database not available" }, 500);
+
+    try {
+      const body = await request.json();
+      const title = typeof body.title === "string" ? body.title.trim() : "";
+      const description = typeof body.description === "string" ? body.description.trim() : "";
+
+      if (!title) {
+        return json({ success: false, error: "សូមបញ្ចូលចំណងជើង Album។" }, 400);
+      }
+
+      const [updated] = await drizzle
+        .update(schema.privateAlbums)
+        .set({
+          title,
+          description: description || null,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.privateAlbums.id, albumId))
+        .returning();
+
+      db.logActivity({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        userRole: currentUser.role,
+        action: "UPDATE_PRIVATE_ALBUM",
+        resource: "PRIVATE_ALBUM",
+        resourceId: albumId,
+        details: `បានកែសម្រួល Album សម្ងាត់ «${title}»`,
+        ip,
+      });
+
+      return json({ success: true, data: updated });
+    } catch (err) {
+      logger.error("Failed to update private album", { error: err });
+      return json({ success: false, error: "Failed to update private album" }, 500);
+    }
+  }
+
+  // DELETE /api/admin/private-archive/albums/:id
+  if (pathname.startsWith("/api/admin/private-archive/albums/") && method === "DELETE") {
+    const privAuth = await requirePrivateArchiveAuth();
+    if (privAuth instanceof Response) return privAuth;
+    const currentUser = privAuth.user;
+
+    const albumId = pathname.replace("/api/admin/private-archive/albums/", "").trim();
+    const drizzle = getDrizzleDb();
+    if (!drizzle) return json({ success: false, error: "Database not available" }, 500);
+
+    try {
+      const [album] = await drizzle
+        .select()
+        .from(schema.privateAlbums)
+        .where(eq(schema.privateAlbums.id, albumId))
+        .limit(1);
+
+      if (!album) {
+        return json({ success: false, error: "រកមិនឃើញ Album នេះទេ។" }, 404);
+      }
+
+      // Fetch all images to clean up R2 objects
+      // Fetch all images and videos to clean up R2 objects
+      const imagesInAlbum = await drizzle
+        .select({ r2Key: schema.privateImages.r2Key })
+        .from(schema.privateImages)
+        .where(eq(schema.privateImages.privateAlbumId, albumId));
+
+      const videosInAlbum = await drizzle
+        .select({ r2Key: schema.privateVideos.r2Key })
+        .from(schema.privateVideos)
+        .where(eq(schema.privateVideos.privateAlbumId, albumId));
+
+      const storage = getStorageProvider();
+      for (const img of imagesInAlbum) {
+        await storage.deleteImage(img.r2Key).catch(() => {});
+      }
+      for (const vid of videosInAlbum) {
+        if (storage.deleteVideo) {
+          await storage.deleteVideo(vid.r2Key).catch(() => {});
+        } else {
+          await storage.deleteImage(vid.r2Key).catch(() => {});
+        }
+      }
+
+      // Delete album row from DB (cascades to private_images)
+      await drizzle.delete(schema.privateAlbums).where(eq(schema.privateAlbums.id, albumId));
+
+      db.logActivity({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        userRole: currentUser.role,
+        action: "DELETE_PRIVATE_ALBUM",
+        resource: "PRIVATE_ALBUM",
+        resourceId: albumId,
+        details: `បានលុប Album សម្ងាត់ «${album.title}» ព្រមទាំងរូបភាព ${imagesInAlbum.length} សន្លឹក`,
+        ip,
+      });
+
+      return json({ success: true, message: "បានលុប Album សម្ងាត់ជោគជ័យ!" });
+    } catch (err) {
+      logger.error("Failed to delete private album", { error: err });
+      return json({ success: false, error: "Failed to delete private album" }, 500);
+    }
+  }
+
+  // POST /api/admin/private-archive/images/upload
+  if (pathname === "/api/admin/private-archive/images/upload" && method === "POST") {
+    const privAuth = await requirePrivateArchiveAuth();
+    if (privAuth instanceof Response) return privAuth;
+    const currentUser = privAuth.user;
+
+    try {
+      const formData = await request.formData();
+      const file = formData.get("file") as File | null;
+      const privateAlbumId = (formData.get("privateAlbumId") as string) || "";
+      const title = (formData.get("title") as string) || "";
+
+      if (!file || typeof file.arrayBuffer !== "function") {
+        return json({ success: false, error: "សូមជ្រើសរើសឯកសាររូបភាពដែលត្រូវ Upload។" }, 400);
+      }
+
+      if (!privateAlbumId) {
+        return json({ success: false, error: "សូមជ្រើសរើស Album សម្ងាត់គោលដៅ។" }, 400);
+      }
+
+      const MAX_SIZE = 15 * 1024 * 1024; // 15MB
+      if (file.size > MAX_SIZE) {
+        return json({ success: false, error: "ទំហំរូបភាពធំជាងកំណត់ (អតិបរមា 15MB)។" }, 413);
+      }
+
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const detectedMime = detectImageMagicBytes(buffer);
+      if (!detectedMime) {
+        return json(
+          {
+            success: false,
+            error: "ប្រភេទឯកសារមិនត្រឹមត្រូវឡើយ។ អនុញ្ញាតតែរូបភាព JPG, PNG, WEBP, GIF, AVIF ប៉ុណ្ណោះ។",
+          },
+          400,
+        );
+      }
+
+      // Validate target private album exists
+      const drizzle = getDrizzleDb();
+      if (drizzle) {
+        const [foundAlbum] = await drizzle
+          .select({ id: schema.privateAlbums.id })
+          .from(schema.privateAlbums)
+          .where(eq(schema.privateAlbums.id, privateAlbumId))
+          .limit(1);
+        if (!foundAlbum) {
+          return json({ success: false, error: "រកមិនឃើញ Album សម្ងាត់គោលដៅឡើយ។" }, 404);
+        }
+      }
+
+      // Save to private storage with private-archive/ key prefix
+      const storage = getStorageProvider();
+      let uniqueKey: string;
+
+      if (typeof storage.savePrivateImage === "function") {
+        const saved = await storage.savePrivateImage({
+          buffer,
+          originalFilename: file.name,
+          mimeType: detectedMime,
+        });
+        uniqueKey = saved.r2Key;
+      } else {
+        const mimeExtMap: Record<string, string> = {
+          "image/jpeg": ".jpg",
+          "image/png": ".png",
+          "image/webp": ".webp",
+          "image/gif": ".gif",
+          "image/avif": ".avif",
+        };
+        const ext = mimeExtMap[detectedMime] || ".jpg";
+        uniqueKey = `private-archive/${Date.now()}-${crypto.randomBytes(6).toString("hex")}${ext}`;
+        await storage.saveImage({
+          buffer,
+          originalFilename: uniqueKey,
+          mimeType: detectedMime,
+        });
+      }
+
+      const newImageId = `pimg-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+      const itemTitle = title.trim() || file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
+
+      try {
+        if (drizzle) {
+          await drizzle.insert(schema.privateImages).values({
+            id: newImageId,
+            privateAlbumId,
+            r2Key: uniqueKey,
+            filename: file.name,
+            mimeType: detectedMime,
+            size: buffer.length,
+            title: itemTitle,
+            createdBy: currentUser.id,
+          });
+
+          await drizzle
+            .update(schema.privateAlbums)
+            .set({
+              photoCount: sql`${schema.privateAlbums.photoCount} + 1`,
+              coverKey: uniqueKey,
+              updatedAt: new Date(),
+            })
+            .where(eq(schema.privateAlbums.id, privateAlbumId))
+            .catch(() => {});
+        }
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "UPLOAD_PRIVATE_IMAGE",
+          resource: "PRIVATE_IMAGE",
+          resourceId: newImageId,
+          details: `បាន Upload រូបភាពសម្ងាត់ «${itemTitle}» ទៅកាន់ Album ${privateAlbumId}`,
+          ip,
+        });
+
+        return json(
+          {
+            success: true,
+            data: {
+              id: newImageId,
+              privateAlbumId,
+              filename: file.name,
+              mimeType: detectedMime,
+              size: buffer.length,
+              title: itemTitle,
+              fileUrl: `/api/admin/private-archive/images/${newImageId}/file`,
+            },
+            message: "បានបង្ហោះរូបភាពសម្ងាត់ដោយជោគជ័យ!",
+          },
+          201,
+        );
+      } catch (dbErr) {
+        // Rollback R2 object if DB insertion fails
+        await storage.deleteImage(uniqueKey).catch(() => {});
+        logger.error("Failed to insert private image record", { error: dbErr });
+        return json({ success: false, error: "មានបញ្ហាក្នុងការរក្សាទុកទិន្នន័យរូបភាពសម្ងាត់។" }, 500);
+      }
+    } catch (err) {
+      logger.error("Unexpected error during private image upload", { error: err });
+      return json({ success: false, error: "មានបញ្ហាក្នុងដំណើរការ Upload រូបភាពសម្ងាត់។" }, 500);
+    }
+  }
+
+  // GET /api/admin/private-archive/images/:id/file (Authorized Image Streamer)
+  if (
+    pathname.startsWith("/api/admin/private-archive/images/") &&
+    pathname.endsWith("/file") &&
+    method === "GET"
+  ) {
+    const privAuth = await requirePrivateArchiveAuth();
+    if (privAuth instanceof Response) return privAuth;
+
+    const imageId = pathname
+      .replace("/api/admin/private-archive/images/", "")
+      .replace("/file", "")
+      .trim();
+
+    const drizzle = getDrizzleDb();
+    if (!drizzle) return new Response("Database unavailable", { status: 503 });
+
+    try {
+      const [imgRecord] = await drizzle
+        .select({
+          id: schema.privateImages.id,
+          r2Key: schema.privateImages.r2Key,
+          mimeType: schema.privateImages.mimeType,
+          size: schema.privateImages.size,
+        })
+        .from(schema.privateImages)
+        .where(eq(schema.privateImages.id, imageId))
+        .limit(1);
+
+      if (!imgRecord || !imgRecord.r2Key) {
+        return new Response("Image Not Found", { status: 404 });
+      }
+
+      const storage = getStorageProvider();
+      if (!storage.getObject) {
+        return new Response("Storage reader not supported", { status: 500 });
+      }
+
+      const objectResult = await storage.getObject(imgRecord.r2Key);
+      if (!objectResult) {
+        return new Response("Image asset not found in storage", { status: 404 });
+      }
+
+      return new Response(Buffer.from(objectResult.body), {
+        status: 200,
+        headers: {
+          "Content-Type": objectResult.contentType || imgRecord.mimeType || "image/jpeg",
+          "Content-Length": String(objectResult.contentLength || imgRecord.size),
+          "Cache-Control": "private, no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    } catch (err) {
+      logger.error("Error streaming private image", { error: err, imageId });
+      return new Response("Internal Server Error", { status: 500 });
+    }
+  }
+
+  // DELETE /api/admin/private-archive/images/:id
+  if (
+    pathname.startsWith("/api/admin/private-archive/images/") &&
+    !pathname.endsWith("/file") &&
+    method === "DELETE"
+  ) {
+    const privAuth = await requirePrivateArchiveAuth();
+    if (privAuth instanceof Response) return privAuth;
+    const currentUser = privAuth.user;
+
+    const imageId = pathname.replace("/api/admin/private-archive/images/", "").trim();
+    const drizzle = getDrizzleDb();
+    if (!drizzle) return json({ success: false, error: "Database not available" }, 500);
+
+    try {
+      const [imgRecord] = await drizzle
+        .select()
+        .from(schema.privateImages)
+        .where(eq(schema.privateImages.id, imageId))
+        .limit(1);
+
+      if (!imgRecord) {
+        return json({ success: false, error: "រកមិនឃើញរូបភាពសម្ងាត់នេះទេ។" }, 404);
+      }
+
+      const storage = getStorageProvider();
+      await storage.deleteImage(imgRecord.r2Key).catch(() => {});
+
+      await drizzle.delete(schema.privateImages).where(eq(schema.privateImages.id, imageId));
+
+      await drizzle
+        .update(schema.privateAlbums)
+        .set({
+          photoCount: sql`GREATEST(0, ${schema.privateAlbums.photoCount} - 1)`,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.privateAlbums.id, imgRecord.privateAlbumId))
+        .catch(() => {});
+
+      db.logActivity({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        userRole: currentUser.role,
+        action: "DELETE_PRIVATE_IMAGE",
+        resource: "PRIVATE_IMAGE",
+        resourceId: imageId,
+        details: `បានលុបរូបភាពសម្ងាត់ ${imgRecord.filename}`,
+        ip,
+      });
+
+      return json({ success: true, message: "បានលុបរូបភាពសម្ងាត់ជោគជ័យ!" });
+    } catch (err) {
+      logger.error("Failed to delete private image", { error: err });
+      return json({ success: false, error: "Failed to delete private image" }, 500);
+    }
+  }
+
+  // POST /api/admin/private-archive/videos/upload
+  if (pathname === "/api/admin/private-archive/videos/upload" && method === "POST") {
+    const privAuth = await requirePrivateArchiveAuth();
+    if (privAuth instanceof Response) return privAuth;
+    const currentUser = privAuth.user;
+
+    // Rate limiting (reuse upload scope)
+    const rl = checkRateLimit("upload", ip);
+    if (!rl.allowed) {
+      return rateLimitedResponse(rl);
+    }
+
+    // Early content-length check (100MB limit + 1MB multipart overhead)
+    const declaredLength = Number(request.headers.get("content-length") || "0");
+    if (declaredLength > LIMITS.videoBytes + 1024 * 1024) {
+      return json({ success: false, error: "ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 100MB)។" }, 413);
+    }
+
+    try {
+      const formData = await request.formData();
+      const file = formData.get("file") as File | null;
+      const privateAlbumId = (formData.get("privateAlbumId") as string) || "";
+      const title = (formData.get("title") as string) || "";
+      const description = (formData.get("description") as string) || "";
+
+      if (!file || typeof file.arrayBuffer !== "function") {
+        return json({ success: false, error: "សូមជ្រើសរើសឯកសារវីដេអូដែលត្រូវ Upload។" }, 400);
+      }
+
+      if (!privateAlbumId) {
+        return json({ success: false, error: "សូមជ្រើសរើស Album សម្ងាត់គោលដៅ។" }, 400);
+      }
+
+      if (file.size > LIMITS.videoBytes) {
+        return json({ success: false, error: "ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 100MB)។" }, 413);
+      }
+
+      // Validate target private album exists in PostgreSQL
+      const drizzle = getDrizzleDb();
+      if (drizzle) {
+        const [foundAlbum] = await drizzle
+          .select({ id: schema.privateAlbums.id })
+          .from(schema.privateAlbums)
+          .where(eq(schema.privateAlbums.id, privateAlbumId))
+          .limit(1);
+        if (!foundAlbum) {
+          return json({ success: false, error: "រកមិនឃើញ Album សម្ងាត់គោលដៅឡើយ។" }, 404);
+        }
+      }
+
+      const buffer = Buffer.from(await file.arrayBuffer());
+      const detectedMime = detectVideoMagicBytes(buffer);
+      if (!detectedMime) {
+        return json(
+          {
+            success: false,
+            error: "ប្រភេទឯកសារមិនត្រឹមត្រូវឡើយ។ អនុញ្ញាតតែវីដេអូ MP4, WebM, MOV ប៉ុណ្ណោះ។",
+          },
+          400,
+        );
+      }
+
+      const storage = getStorageProvider();
+      let uniqueKey: string;
+      let storedSize: number = buffer.length;
+
+      if (typeof storage.savePrivateVideo === "function") {
+        const saved = await storage.savePrivateVideo({
+          buffer,
+          originalFilename: file.name,
+          mimeType: detectedMime,
+        });
+        uniqueKey = saved.r2Key;
+        storedSize = saved.size;
+      } else {
+        const extMap: Record<string, string> = {
+          "video/mp4": ".mp4",
+          "video/webm": ".webm",
+          "video/quicktime": ".mov",
+        };
+        const ext = extMap[detectedMime] || ".mp4";
+        uniqueKey = `private-archive/videos/${Date.now()}-${crypto.randomBytes(6).toString("hex")}${ext}`;
+        if (storage.saveVideo) {
+          const saved = await storage.saveVideo({
+            buffer,
+            originalFilename: uniqueKey,
+            mimeType: detectedMime,
+          });
+          uniqueKey = saved.filename;
+          storedSize = saved.size;
+        }
+      }
+
+      const newVideoId = `pvid-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+      const safeTitle = sanitizeText(title, 200) || file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
+      const safeDesc = sanitizeText(description, 2000);
+
+      try {
+        if (drizzle) {
+          await drizzle.insert(schema.privateVideos).values({
+            id: newVideoId,
+            privateAlbumId,
+            r2Key: uniqueKey,
+            filename: file.name,
+            mimeType: detectedMime,
+            size: storedSize,
+            duration: null,
+            width: null,
+            height: null,
+            title: safeTitle,
+            description: safeDesc || null,
+            createdBy: currentUser.id,
+          });
+        }
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "UPLOAD_PRIVATE_VIDEO",
+          resource: "PRIVATE_VIDEO",
+          resourceId: newVideoId,
+          details: `បានបង្ហោះវីដេអូសម្ងាត់ «${safeTitle}» (${Math.round(storedSize / (1024 * 1024))}MB) ចូល Album សម្ងាត់ ${privateAlbumId}`,
+          ip,
+        });
+
+        return json(
+          {
+            success: true,
+            data: {
+              id: newVideoId,
+              privateAlbumId,
+              filename: file.name,
+              mimeType: detectedMime,
+              size: storedSize,
+              title: safeTitle,
+              description: safeDesc,
+              fileUrl: `/api/admin/private-archive/videos/${newVideoId}/file`,
+            },
+            message: "បានបង្ហោះវីដេអូសម្ងាត់ដោយជោគជ័យ!",
+          },
+          201,
+        );
+      } catch (dbErr) {
+        if (storage.deleteVideo) {
+          await storage.deleteVideo(uniqueKey).catch(() => {});
+        } else {
+          await storage.deleteImage(uniqueKey).catch(() => {});
+        }
+        logger.error("Failed to insert private video record", { error: dbErr });
+        return json({ success: false, error: "មានបញ្ហាក្នុងការរក្សាទុកទិន្នន័យវីដេអូសម្ងាត់។" }, 500);
+      }
+    } catch (err) {
+      logger.error("Unexpected error during private video upload", { error: err });
+      return json({ success: false, error: "មានបញ្ហាក្នុងដំណើរការ Upload វីដេអូសម្ងាត់។" }, 500);
+    }
+  }
+
+  // GET /api/admin/private-archive/videos/:id/file (Authorized Video Streamer)
+  if (
+    pathname.startsWith("/api/admin/private-archive/videos/") &&
+    pathname.endsWith("/file") &&
+    method === "GET"
+  ) {
+    const privAuth = await requirePrivateArchiveAuth();
+    if (privAuth instanceof Response) return privAuth;
+
+    const videoId = pathname
+      .replace("/api/admin/private-archive/videos/", "")
+      .replace("/file", "")
+      .trim();
+
+    const drizzle = getDrizzleDb();
+    if (!drizzle) return new Response("Database unavailable", { status: 503 });
+
+    try {
+      const [videoRecord] = await drizzle
+        .select({
+          id: schema.privateVideos.id,
+          r2Key: schema.privateVideos.r2Key,
+          mimeType: schema.privateVideos.mimeType,
+          size: schema.privateVideos.size,
+        })
+        .from(schema.privateVideos)
+        .where(eq(schema.privateVideos.id, videoId))
+        .limit(1);
+
+      if (!videoRecord || !videoRecord.r2Key) {
+        return new Response("Video Not Found", { status: 404 });
+      }
+
+      const storage = getStorageProvider();
+      if (!storage.getObject) {
+        return new Response("Storage reader not supported", { status: 500 });
+      }
+
+      const objectResult = await storage.getObject(videoRecord.r2Key);
+      if (!objectResult) {
+        return new Response("Video File Not Found in Storage", { status: 404 });
+      }
+
+      const totalSize = objectResult.contentLength || videoRecord.size || objectResult.body.length;
+      const fullBuffer = Buffer.from(objectResult.body);
+      const mimeType = objectResult.contentType || videoRecord.mimeType || "video/mp4";
+
+      const rangeHeader = request.headers.get("range");
+      if (rangeHeader && rangeHeader.startsWith("bytes=")) {
+        const parts = rangeHeader.replace("bytes=", "").split("-");
+        const start = parseInt(parts[0] || "0", 10);
+        const end = parts[1] && parts[1].trim() !== "" ? parseInt(parts[1], 10) : totalSize - 1;
+
+        if (!isNaN(start) && !isNaN(end) && start <= end && start < totalSize) {
+          const actualEnd = Math.min(end, totalSize - 1);
+          const chunk = fullBuffer.subarray(start, actualEnd + 1);
+
+          return new Response(chunk, {
+            status: 206,
+            headers: {
+              "Content-Type": mimeType,
+              "Content-Length": String(chunk.length),
+              "Content-Range": `bytes ${start}-${actualEnd}/${totalSize}`,
+              "Accept-Ranges": "bytes",
+              "Cache-Control": "private, no-cache, no-store, must-revalidate",
+              Pragma: "no-cache",
+              "X-Content-Type-Options": "nosniff",
+            },
+          });
+        }
+      }
+
+      return new Response(fullBuffer, {
+        status: 200,
+        headers: {
+          "Content-Type": mimeType,
+          "Content-Length": String(totalSize),
+          "Accept-Ranges": "bytes",
+          "Cache-Control": "private, no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    } catch (err) {
+      logger.error("Error streaming private video", { error: err, videoId });
+      return new Response("Internal Server Error", { status: 500 });
+    }
+  }
+
+  // DELETE /api/admin/private-archive/videos/:id
+  if (
+    pathname.startsWith("/api/admin/private-archive/videos/") &&
+    !pathname.endsWith("/file") &&
+    method === "DELETE"
+  ) {
+    const privAuth = await requirePrivateArchiveAuth();
+    if (privAuth instanceof Response) return privAuth;
+    const currentUser = privAuth.user;
+
+    const videoId = pathname.replace("/api/admin/private-archive/videos/", "").trim();
+    const drizzle = getDrizzleDb();
+    if (!drizzle) return json({ success: false, error: "Database not available" }, 500);
+
+    try {
+      const [videoRecord] = await drizzle
+        .select()
+        .from(schema.privateVideos)
+        .where(eq(schema.privateVideos.id, videoId))
+        .limit(1);
+
+      if (!videoRecord) {
+        return json({ success: false, error: "រកមិនឃើញវីដេអូសម្ងាត់នេះទេ។" }, 404);
+      }
+
+      const storage = getStorageProvider();
+      if (storage.deleteVideo) {
+        await storage.deleteVideo(videoRecord.r2Key).catch(() => {});
+      } else {
+        await storage.deleteImage(videoRecord.r2Key).catch(() => {});
+      }
+
+      await drizzle.delete(schema.privateVideos).where(eq(schema.privateVideos.id, videoId));
+
+      db.logActivity({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        userRole: currentUser.role,
+        action: "DELETE_PRIVATE_VIDEO",
+        resource: "PRIVATE_VIDEO",
+        resourceId: videoId,
+        details: `បានលុបវីដេអូសម្ងាត់ ${videoRecord.filename}`,
+        ip,
+      });
+
+      return json({ success: true, message: "បានលុបវីដេអូសម្ងាត់ជោគជ័យ!" });
+    } catch (err) {
+      logger.error("Failed to delete private video", { error: err });
+      return json({ success: false, error: "Failed to delete private video" }, 500);
+    }
+  }
+
+  // POST /api/admin/private-archive/change-code (Super Admin only)
+  if (pathname === "/api/admin/private-archive/change-code" && method === "POST") {
+    const auth = await requireSuperAdmin(request);
+    if (auth instanceof Response) return auth;
+    const currentUser = auth.user;
+
+    try {
+      const body = await request.json();
+      const newCode = typeof body.newCode === "string" ? body.newCode.trim() : "";
+
+      if (newCode.length < 4) {
+        return json({ success: false, error: "លេខកូដសម្ងាត់ត្រូវមានយ៉ាងហោចណាស់ ៤ តួអក្សរ។" }, 400);
+      }
+
+      const newHash = hashPassword(newCode);
+      const drizzle = getDrizzleDb();
+
+      if (drizzle) {
+        await drizzle
+          .insert(schema.siteSettings)
+          .values({
+            key: "private_archive_code_hash",
+            value: newHash,
+            description: "Hashed access code for Private Archive",
+            updatedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: schema.siteSettings.key,
+            set: {
+              value: newHash,
+              updatedAt: new Date(),
+            },
+          });
+      }
+
+      // Invalidate all active private sessions to enforce new code
+      privateArchiveSessions.clear();
+
+      db.logActivity({
+        userId: currentUser.id,
+        userName: currentUser.name,
+        userRole: currentUser.role,
+        action: "CHANGE_PRIVATE_ARCHIVE_CODE",
+        resource: "PRIVATE_ARCHIVE",
+        details: "បានផ្លាស់ប្តូរលេខកូដសម្ងាត់បណ្ណសារសម្ងាត់",
+        ip,
+      });
+
+      return json({
+        success: true,
+        message: "បានផ្លាស់ប្តូរលេខកូដសម្ងាត់ជោគជ័យ! សូមដោះសោឡើងវិញដោយលេខកូដថ្មី។",
+      });
+    } catch (err) {
+      logger.error("Failed to change private archive code", { error: err });
+      return json({ success: false, error: "Failed to change access code" }, 500);
+    }
+  }
+
   // --- 12. PUBLIC ARCHIVE READ ENDPOINTS (POSTGRESQL-BACKED) ---
 
   // GET /api/archive/festivals
@@ -1764,6 +3672,25 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       return json({ success: true, data: yearsList });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to fetch years";
+      return json({ success: false, error: msg }, 500);
+    }
+  }
+
+  // GET /api/archive/events?festivalId=...&year=...
+  if (pathname === "/api/archive/events" && method === "GET") {
+    try {
+      const festivalId = url.searchParams.get("festivalId") || undefined;
+      const yearParam = url.searchParams.get("year");
+      const year = yearParam ? parseInt(yearParam, 10) : undefined;
+
+      if (!festivalId || !year || isNaN(year)) {
+        return json({ success: false, error: "festivalId and valid year parameters are required" }, 400);
+      }
+
+      const eventsList = await getPostgresEventsForFestivalYear(festivalId, year);
+      return json({ success: true, data: eventsList });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to fetch events";
       return json({ success: false, error: msg }, 500);
     }
   }
@@ -1804,8 +3731,29 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     }
   }
 
+  // GET /api/archive/albums/:id/videos
+  if (
+    pathname.startsWith("/api/archive/albums/") &&
+    pathname.endsWith("/videos") &&
+    method === "GET"
+  ) {
+    try {
+      const albumId = pathname.replace("/api/archive/albums/", "").replace("/videos", "").trim();
+      const videos = await getPostgresVideosForAlbum(albumId);
+      return json({ success: true, data: videos });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to fetch videos";
+      return json({ success: false, error: msg }, 500);
+    }
+  }
+
   // GET /api/archive/albums/:id
-  if (pathname.startsWith("/api/archive/albums/") && method === "GET") {
+  if (
+    pathname.startsWith("/api/archive/albums/") &&
+    !pathname.endsWith("/photos") &&
+    !pathname.endsWith("/videos") &&
+    method === "GET"
+  ) {
     try {
       const albumId = pathname.replace("/api/archive/albums/", "").trim();
       const album = await getPostgresAlbumById(albumId);
@@ -1832,6 +3780,23 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     }
   }
 
+  // GET /api/archive/slideshow-albums (Home Slideshow Albums with all images grouped by Album)
+  if (pathname === "/api/archive/slideshow-albums" && method === "GET") {
+    try {
+      const albums = await getArchiveAlbumsWithAllImages();
+      const totalImages = albums.reduce((sum, a) => sum + (a.images?.length || 0), 0);
+      return json({
+        success: true,
+        data: albums,
+        totalAlbums: albums.length,
+        totalImages,
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to fetch slideshow albums";
+      return json({ success: false, error: msg }, 500);
+    }
+  }
+
   // GET /api/archive/images (Public Image Gallery Paginated & Filtered by Year/Festival/Search)
   if (pathname === "/api/archive/images" && method === "GET") {
     try {
@@ -1845,6 +3810,30 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       const year = yearParam && yearParam !== "all" ? parseInt(yearParam, 10) : undefined;
       const page = pageParam ? Math.max(1, parseInt(pageParam, 10) || 1) : 1;
       const limit = limitParam ? Math.min(100, Math.max(1, parseInt(limitParam, 10) || 24)) : 24;
+
+      if (url.searchParams.get("all") === "true") {
+        const allImages = await getAllArchiveImagesForSlideshow();
+        return json({
+          success: true,
+          data: allImages,
+          total: allImages.length,
+          page: 1,
+          limit: allImages.length,
+          totalPages: 1,
+        });
+      }
+
+      if (url.searchParams.get("diverse") === "true") {
+        const diverseImages = await getDiverseArchiveImages(limit);
+        return json({
+          success: true,
+          data: diverseImages,
+          total: diverseImages.length,
+          page: 1,
+          limit,
+          totalPages: 1,
+        });
+      }
 
       const result = await getAdminImagesPaginated({
         page,
@@ -1874,10 +3863,32 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
   if (pathname === "/api/archive/search" && method === "GET") {
     try {
       const q = url.searchParams.get("q") || "";
+      const type = url.searchParams.get("type");
+      if (type === "videos") {
+        const videoResults = await searchPostgresVideos(q);
+        return json({ success: true, data: videoResults });
+      }
       const results = await searchPostgresArchive(q);
       return json({ success: true, data: results });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Search failed";
+      return json({ success: false, error: msg }, 500);
+    }
+  }
+
+  // GET /api/archive/videos (Public Video Search / Listing)
+  if (pathname === "/api/archive/videos" && method === "GET") {
+    try {
+      const q = url.searchParams.get("q") || url.searchParams.get("search") || "";
+      const albumId = url.searchParams.get("albumId") || undefined;
+      if (albumId) {
+        const videos = await getPostgresVideosForAlbum(albumId);
+        return json({ success: true, data: videos });
+      }
+      const videos = await searchPostgresVideos(q);
+      return json({ success: true, data: videos });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Failed to fetch videos";
       return json({ success: false, error: msg }, 500);
     }
   }

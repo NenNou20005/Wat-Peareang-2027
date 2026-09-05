@@ -10,6 +10,7 @@ import {
   Image as ImageIcon,
   Images,
   Upload,
+  Video,
   Users,
   ScrollText,
   Trash2,
@@ -61,10 +62,22 @@ const adminNav: NavItem[] = [
     requiredPermission: "view_images",
   },
   {
+    to: "/admin/videos",
+    label: "គ្រប់គ្រងវីដេអូ & Upload",
+    icon: Video,
+    requiredPermission: "view_images",
+  },
+  {
     to: "/admin/image-gallery",
     label: "វិចិត្រសាលរូបភាព",
     icon: Images,
     requiredPermission: "view_images",
+  },
+  {
+    to: "/admin/private-archive",
+    label: "បណ្ណសារសម្ងាត់ (Private)",
+    icon: Lock,
+    requiredPermission: "manage_albums",
   },
   {
     to: "/admin/editors",

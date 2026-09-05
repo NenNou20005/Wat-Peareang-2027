@@ -1,11 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
-import { ArrowRight, Camera, Images, Upload } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import heroImg from "@/assets/hero-angkor.jpg";
 import { Button } from "@/components/ui/button";
 import { YearPills, FestivalPills } from "@/components/site/FilterBar";
 import { YearSection } from "@/components/site/YearSection";
-import { UploadTrigger } from "@/components/site/UploadModal";
 import { toKhmerNumber } from "@/data/archive";
 import {
   useFestivals,
@@ -14,7 +13,10 @@ import {
   useAlbum,
   useAlbumPhotos,
   useArchiveStats,
+  useHomepageHero,
 } from "@/hooks/useArchiveData";
+import { resolveImageUrl } from "@/lib/asset-resolver";
+import { HomeSlideshow } from "@/components/site/HomeSlideshow";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -40,6 +42,7 @@ function Index() {
   const { data: festivals = [] } = useFestivals();
   const { data: allAlbums = [] } = useAlbums();
   const { data: archiveStats } = useArchiveStats();
+  const { data: customHeroUrl } = useHomepageHero();
 
   const [year, setYear] = useState<number | "all">(2020);
   const [selected, setSelected] = useState<string[]>([]);
@@ -73,14 +76,16 @@ function Index() {
     { icon: "🏛️", value: `${toKhmerNumber(totalFestivalsCount)}+`, label: "ព្រឹត្តិការណ៍" },
   ];
 
+  const displayHeroUrl = customHeroUrl ? resolveImageUrl(customHeroUrl) : heroImg;
+
   return (
     <>
       {/* Hero */}
       <section className="relative">
         <div className="relative h-[440px] w-full overflow-hidden md:h-[520px]">
           <img
-            src={heroImg}
-            alt="អង្គរវត្តពេលថ្ងៃលិច ជាមួយទង់បុណ្យខ្មែរ"
+            src={displayHeroUrl}
+            alt="វត្តពារាំង រូបផ្ទាំងធំទំព័រដើម"
             width={1920}
             height={912}
             className="h-full w-full object-cover"
@@ -98,16 +103,6 @@ function Index() {
                 <p className="mt-4 text-sm text-primary-foreground/85 md:text-base">
                   រក្សាទុកអនុស្សាវរីយ៍
                 </p>
-                <div className="mt-7 flex flex-wrap gap-3">
-                  <Button asChild size="lg" className="rounded-full">
-                    <Link to="/albums">
-                      <Images className="mr-1 h-4 w-4" /> មើល Albums
-                    </Link>
-                  </Button>
-                  <UploadTrigger className="bg-gold text-gold-foreground hover:bg-gold/90">
-                    <Upload className="mr-1 h-4 w-4" /> បង្ហោះរូបភាព
-                  </UploadTrigger>
-                </div>
               </div>
             </div>
           </div>
@@ -136,9 +131,10 @@ function Index() {
         <YearPills value={year} onChange={setYear} />
         <FestivalPills
           selected={selected}
+          activeYear={year}
           onToggle={(id) =>
             setSelected((prev) =>
-              prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+              prev.includes(id) ? [] : [id],
             )
           }
           onClear={() => setSelected([])}
@@ -156,14 +152,25 @@ function Index() {
       {memory && (
         <section className="mx-auto mt-20 max-w-[1400px] px-4 lg:px-8">
           <div className="overflow-hidden rounded-3xl border border-border bg-card shadow-card md:grid md:grid-cols-2">
-            <img
-              src={memory.festival.cover}
-              alt={memory.festival.name}
-              loading="lazy"
-              width={1024}
-              height={768}
-              className="h-64 w-full object-cover md:h-full"
-            />
+            {/* Memory Cover Stage with Ambient Backdrop (Preserves 100% Original Aspect Ratio, No Crop) */}
+            <div className="relative min-h-[260px] sm:min-h-[320px] md:min-h-full w-full overflow-hidden bg-secondary/80 flex items-center justify-center p-2 sm:p-4">
+              {/* Ambient Blurred Backdrop */}
+              <img
+                src={memory.festival.cover}
+                alt=""
+                aria-hidden="true"
+                className="absolute inset-0 h-full w-full object-cover blur-md scale-110 opacity-35 dark:opacity-25 pointer-events-none"
+              />
+              {/* Contained Uncropped Cover */}
+              <img
+                src={memory.festival.cover}
+                alt={memory.festival.name}
+                loading="lazy"
+                width={1024}
+                height={768}
+                className="relative z-[1] max-h-full max-w-full w-auto h-auto object-contain transition-transform duration-500 hover:scale-[1.02] shadow-sm rounded-xl"
+              />
+            </div>
             <div className="p-6 md:p-8">
               <p className="text-xs uppercase tracking-[0.25em] text-gold">
                 📸 អនុស្សាវរីយ៍ថ្ងៃនេះ
@@ -223,28 +230,8 @@ function Index() {
         </div>
       </section>
 
-      {/* Upload CTA */}
-      <section className="mx-auto mt-20 max-w-[1400px] px-4 lg:px-8">
-        <div className="relative overflow-hidden rounded-3xl bg-temple px-6 py-12 text-center text-temple-foreground shadow-card">
-          <span className="absolute left-4 top-4 text-3xl text-gold/40" aria-hidden>
-            ❈
-          </span>
-          <span className="absolute bottom-4 right-4 text-3xl text-gold/40" aria-hidden>
-            ❈
-          </span>
-          <span className="mx-auto grid h-16 w-16 place-items-center rounded-3xl bg-gold text-2xl text-gold-foreground">
-            <Camera className="h-7 w-7" />
-          </span>
-          <h2 className="mt-6 text-2xl">បន្ថែមអនុស្សាវរីយ៍របស់អ្នក</h2>
-          <p className="mx-auto mt-3 max-w-xl text-sm text-temple-foreground/80">
-            បង្ហោះរូបភាពបុណ្យ និងកម្មវិធីខ្មែរ ដើម្បីរក្សាទុកជាបណ្ណសារសម្រាប់អនាគត។
-            អាចជ្រើសរើសរូបភាពបានរហូតដល់ ៥០ រូបក្នុងមួយលើក។
-          </p>
-          <div className="mt-7 flex justify-center">
-            <UploadTrigger className="bg-gold text-gold-foreground hover:bg-gold/90" />
-          </div>
-        </div>
-      </section>
+      {/* Featured Archive Image Slideshow / Auto Carousel */}
+      <HomeSlideshow />
     </>
   );
 }

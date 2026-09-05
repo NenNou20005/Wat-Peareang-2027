@@ -7,7 +7,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
 } from "@aws-sdk/client-s3";
-import type { StorageProvider, StoredImageResult } from "./index";
+import type { StorageProvider, StoredImageResult, StoredVideoResult } from "./index";
 
 function getExtensionFromMime(mime: string): string {
   const mimeMap: Record<string, string> = {
@@ -18,6 +18,15 @@ function getExtensionFromMime(mime: string): string {
     "image/avif": ".avif",
   };
   return mimeMap[mime.toLowerCase()] || ".jpg";
+}
+
+function getVideoExtensionFromMime(mime: string): string {
+  const videoMimeMap: Record<string, string> = {
+    "video/mp4": ".mp4",
+    "video/webm": ".webm",
+    "video/quicktime": ".mov",
+  };
+  return videoMimeMap[mime.toLowerCase()] || ".mp4";
 }
 
 export class R2StorageProvider implements StorageProvider {
@@ -120,6 +129,128 @@ export class R2StorageProvider implements StorageProvider {
     }
   }
 
+  public async savePrivateImage(params: {
+    buffer: Buffer;
+    originalFilename: string;
+    mimeType: string;
+  }): Promise<{ r2Key: string; size: number; mimeType: string }> {
+    const client = this.getClient();
+    const ext = getExtensionFromMime(params.mimeType);
+    const uniqueKey = `private-archive/${Date.now()}-${crypto.randomBytes(6).toString("hex")}${ext}`;
+
+    try {
+      await client.send(
+        new PutObjectCommand({
+          Bucket: this.bucketName,
+          Key: uniqueKey,
+          Body: params.buffer,
+          ContentType: params.mimeType,
+          Metadata: {
+            originalFilename: encodeURIComponent(params.originalFilename),
+          },
+        }),
+      );
+
+      return {
+        r2Key: uniqueKey,
+        size: params.buffer.length,
+        mimeType: params.mimeType,
+      };
+    } catch (err) {
+      console.error(
+        `[Storage/R2]: Private upload FAILED for key="${uniqueKey}" in bucket="${this.bucketName}":`,
+        err instanceof Error ? err.message : err,
+      );
+      throw new Error(
+        `Failed to upload private image to Cloudflare R2: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  public async saveVideo(params: {
+    buffer: Buffer;
+    originalFilename: string;
+    mimeType: string;
+  }): Promise<StoredVideoResult> {
+    const client = this.getClient();
+    const ext = getVideoExtensionFromMime(params.mimeType);
+    const uniqueKey = `uploads/videos/${Date.now()}-${crypto.randomBytes(6).toString("hex")}${ext}`;
+
+    console.log(
+      `[Storage/R2]: Starting video upload to bucket="${this.bucketName}", key="${uniqueKey}", size=${params.buffer.length}B, mime="${params.mimeType}"`,
+    );
+
+    try {
+      await client.send(
+        new PutObjectCommand({
+          Bucket: this.bucketName,
+          Key: uniqueKey,
+          Body: params.buffer,
+          ContentType: params.mimeType,
+          Metadata: {
+            originalFilename: encodeURIComponent(params.originalFilename),
+          },
+        }),
+      );
+
+      const url = this.getPublicUrl(uniqueKey);
+      console.log(`[Storage/R2]: Video upload success! URL="${url}"`);
+
+      return {
+        url,
+        filename: uniqueKey,
+        size: params.buffer.length,
+        mimeType: params.mimeType,
+      };
+    } catch (err) {
+      console.error(
+        `[Storage/R2]: Video upload FAILED for key="${uniqueKey}" in bucket="${this.bucketName}":`,
+        err instanceof Error ? err.message : err,
+      );
+      throw new Error(
+        `Failed to upload video to Cloudflare R2: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  public async savePrivateVideo(params: {
+    buffer: Buffer;
+    originalFilename: string;
+    mimeType: string;
+  }): Promise<{ r2Key: string; size: number; mimeType: string }> {
+    const client = this.getClient();
+    const ext = getVideoExtensionFromMime(params.mimeType);
+    const uniqueKey = `private-archive/videos/${Date.now()}-${crypto.randomBytes(6).toString("hex")}${ext}`;
+
+    try {
+      await client.send(
+        new PutObjectCommand({
+          Bucket: this.bucketName,
+          Key: uniqueKey,
+          Body: params.buffer,
+          ContentType: params.mimeType,
+          Metadata: {
+            originalFilename: encodeURIComponent(params.originalFilename),
+          },
+        }),
+      );
+
+      return {
+        r2Key: uniqueKey,
+        size: params.buffer.length,
+        mimeType: params.mimeType,
+      };
+    } catch (err) {
+      console.error(
+        `[Storage/R2]: Private video upload FAILED for key="${uniqueKey}" in bucket="${this.bucketName}":`,
+        err instanceof Error ? err.message : err,
+      );
+      throw new Error(
+        `Failed to upload private video to Cloudflare R2: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   public async deleteImage(urlOrKey: string): Promise<boolean> {
     try {
       const client = this.getClient();
@@ -137,6 +268,10 @@ export class R2StorageProvider implements StorageProvider {
       console.error("[Cloudflare R2 Delete Error]:", err);
       return false;
     }
+  }
+
+  public async deleteVideo(urlOrKey: string): Promise<boolean> {
+    return this.deleteImage(urlOrKey);
   }
 
   public async getObject(key: string): Promise<{
@@ -158,7 +293,7 @@ export class R2StorageProvider implements StorageProvider {
 
       return {
         body: bytes,
-        contentType: res.ContentType || "image/jpeg",
+        contentType: res.ContentType || "application/octet-stream",
         contentLength: res.ContentLength || bytes.length,
       };
     } catch (err) {

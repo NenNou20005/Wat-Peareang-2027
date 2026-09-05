@@ -10,6 +10,13 @@ export interface StoredImageResult {
   mimeType: string;
 }
 
+export interface StoredVideoResult {
+  url: string;
+  filename: string;
+  size: number;
+  mimeType: string;
+}
+
 export interface StorageProvider {
   saveImage(params: {
     buffer: Buffer;
@@ -23,6 +30,22 @@ export interface StorageProvider {
     contentType: string;
     contentLength: number;
   } | null>;
+  savePrivateImage?(params: {
+    buffer: Buffer;
+    originalFilename: string;
+    mimeType: string;
+  }): Promise<{ r2Key: string; size: number; mimeType: string }>;
+  saveVideo?(params: {
+    buffer: Buffer;
+    originalFilename: string;
+    mimeType: string;
+  }): Promise<StoredVideoResult>;
+  deleteVideo?(urlOrPath: string): Promise<boolean>;
+  savePrivateVideo?(params: {
+    buffer: Buffer;
+    originalFilename: string;
+    mimeType: string;
+  }): Promise<{ r2Key: string; size: number; mimeType: string }>;
 }
 
 let currentStorageProvider: StorageProvider | null = null;

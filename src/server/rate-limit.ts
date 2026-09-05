@@ -16,7 +16,8 @@ export type RateLimitScope =
   | "admin_read"
   | "admin_write"
   | "upload"
-  | "export";
+  | "export"
+  | "private_unlock";
 
 interface ScopeConfig {
   /** Maximum requests allowed per key inside the window. */
@@ -28,6 +29,8 @@ interface ScopeConfig {
 const SCOPES: Record<RateLimitScope, ScopeConfig> = {
   // Login/logout/session probing — deliberately tight.
   auth: { limit: 20, windowMs: 5 * 60_000 },
+  // Private archive unlock — strict anti-brute-force (5 attempts / 15 minutes)
+  private_unlock: { limit: 5, windowMs: 15 * 60_000 },
   // Likes / favorites / view tracking from the public site.
   interaction: { limit: 120, windowMs: 60_000 },
   search: { limit: 60, windowMs: 60_000 },
@@ -122,6 +125,11 @@ export function rateLimitedResponse(result: RateLimitResult): Response {
       },
     },
   );
+}
+
+export function resetRateLimit(scope: RateLimitScope, key: string): void {
+  const bucketKey = `${scope}:${key}`;
+  buckets.delete(bucketKey);
 }
 
 /**

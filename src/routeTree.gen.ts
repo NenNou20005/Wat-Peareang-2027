@@ -22,12 +22,15 @@ import { Route as AdminActivityLogsRouteImport } from './routes/admin/activity-l
 import { Route as AdminAlbumsRouteImport } from './routes/admin/albums'
 import { Route as AdminAnalyticsRouteImport } from './routes/admin/analytics'
 import { Route as AdminEditorsRouteImport } from './routes/admin/editors'
+import { Route as AdminEventsRouteImport } from './routes/admin/events'
 import { Route as AdminFestivalsRouteImport } from './routes/admin/festivals'
 import { Route as AdminImageGalleryRouteImport } from './routes/admin/image-gallery'
 import { Route as AdminImagesRouteImport } from './routes/admin/images'
 import { Route as AdminLoginRouteImport } from './routes/admin/login'
+import { Route as AdminPrivateArchiveRouteImport } from './routes/admin/private-archive'
 import { Route as AdminSettingsRouteImport } from './routes/admin/settings'
 import { Route as AdminTrashRouteImport } from './routes/admin/trash'
+import { Route as AdminVideosRouteImport } from './routes/admin/videos'
 import { Route as AdminYearsRouteImport } from './routes/admin/years'
 import { Route as AlbumAlbumIdRouteImport } from './routes/album.$albumId'
 
@@ -96,6 +99,11 @@ const AdminEditorsRoute = AdminEditorsRouteImport.update({
   path: '/admin/editors',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminEventsRoute = AdminEventsRouteImport.update({
+  id: '/admin/events',
+  path: '/admin/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminFestivalsRoute = AdminFestivalsRouteImport.update({
   id: '/admin/festivals',
   path: '/admin/festivals',
@@ -116,6 +124,11 @@ const AdminLoginRoute = AdminLoginRouteImport.update({
   path: '/admin/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminPrivateArchiveRoute = AdminPrivateArchiveRouteImport.update({
+  id: '/admin/private-archive',
+  path: '/admin/private-archive',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminSettingsRoute = AdminSettingsRouteImport.update({
   id: '/admin/settings',
   path: '/admin/settings',
@@ -124,6 +137,11 @@ const AdminSettingsRoute = AdminSettingsRouteImport.update({
 const AdminTrashRoute = AdminTrashRouteImport.update({
   id: '/admin/trash',
   path: '/admin/trash',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminVideosRoute = AdminVideosRouteImport.update({
+  id: '/admin/videos',
+  path: '/admin/videos',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminYearsRoute = AdminYearsRouteImport.update({
@@ -150,12 +168,15 @@ export interface FileRoutesByFullPath {
   '/admin/albums': typeof AdminAlbumsRoute
   '/admin/analytics': typeof AdminAnalyticsRoute
   '/admin/editors': typeof AdminEditorsRoute
+  '/admin/events': typeof AdminEventsRoute
   '/admin/festivals': typeof AdminFestivalsRoute
   '/admin/image-gallery': typeof AdminImageGalleryRoute
   '/admin/images': typeof AdminImagesRoute
   '/admin/login': typeof AdminLoginRoute
+  '/admin/private-archive': typeof AdminPrivateArchiveRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/trash': typeof AdminTrashRoute
+  '/admin/videos': typeof AdminVideosRoute
   '/admin/years': typeof AdminYearsRoute
   '/album/$albumId': typeof AlbumAlbumIdRoute
   '/admin/': typeof AdminIndexRoute
@@ -173,12 +194,15 @@ export interface FileRoutesByTo {
   '/admin/albums': typeof AdminAlbumsRoute
   '/admin/analytics': typeof AdminAnalyticsRoute
   '/admin/editors': typeof AdminEditorsRoute
+  '/admin/events': typeof AdminEventsRoute
   '/admin/festivals': typeof AdminFestivalsRoute
   '/admin/image-gallery': typeof AdminImageGalleryRoute
   '/admin/images': typeof AdminImagesRoute
   '/admin/login': typeof AdminLoginRoute
+  '/admin/private-archive': typeof AdminPrivateArchiveRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/trash': typeof AdminTrashRoute
+  '/admin/videos': typeof AdminVideosRoute
   '/admin/years': typeof AdminYearsRoute
   '/album/$albumId': typeof AlbumAlbumIdRoute
   '/admin': typeof AdminIndexRoute
@@ -197,12 +221,15 @@ export interface FileRoutesById {
   '/admin/albums': typeof AdminAlbumsRoute
   '/admin/analytics': typeof AdminAnalyticsRoute
   '/admin/editors': typeof AdminEditorsRoute
+  '/admin/events': typeof AdminEventsRoute
   '/admin/festivals': typeof AdminFestivalsRoute
   '/admin/image-gallery': typeof AdminImageGalleryRoute
   '/admin/images': typeof AdminImagesRoute
   '/admin/login': typeof AdminLoginRoute
+  '/admin/private-archive': typeof AdminPrivateArchiveRoute
   '/admin/settings': typeof AdminSettingsRoute
   '/admin/trash': typeof AdminTrashRoute
+  '/admin/videos': typeof AdminVideosRoute
   '/admin/years': typeof AdminYearsRoute
   '/album/$albumId': typeof AlbumAlbumIdRoute
   '/admin/': typeof AdminIndexRoute
@@ -222,12 +249,15 @@ export interface FileRouteTypes {
     | '/admin/albums'
     | '/admin/analytics'
     | '/admin/editors'
+    | '/admin/events'
     | '/admin/festivals'
     | '/admin/image-gallery'
     | '/admin/images'
     | '/admin/login'
+    | '/admin/private-archive'
     | '/admin/settings'
     | '/admin/trash'
+    | '/admin/videos'
     | '/admin/years'
     | '/album/$albumId'
     | '/admin/'
@@ -245,12 +275,15 @@ export interface FileRouteTypes {
     | '/admin/albums'
     | '/admin/analytics'
     | '/admin/editors'
+    | '/admin/events'
     | '/admin/festivals'
     | '/admin/image-gallery'
     | '/admin/images'
     | '/admin/login'
+    | '/admin/private-archive'
     | '/admin/settings'
     | '/admin/trash'
+    | '/admin/videos'
     | '/admin/years'
     | '/album/$albumId'
     | '/admin'
@@ -268,12 +301,15 @@ export interface FileRouteTypes {
     | '/admin/albums'
     | '/admin/analytics'
     | '/admin/editors'
+    | '/admin/events'
     | '/admin/festivals'
     | '/admin/image-gallery'
     | '/admin/images'
     | '/admin/login'
+    | '/admin/private-archive'
     | '/admin/settings'
     | '/admin/trash'
+    | '/admin/videos'
     | '/admin/years'
     | '/album/$albumId'
     | '/admin/'
@@ -292,12 +328,15 @@ export interface RootRouteChildren {
   AdminAlbumsRoute: typeof AdminAlbumsRoute
   AdminAnalyticsRoute: typeof AdminAnalyticsRoute
   AdminEditorsRoute: typeof AdminEditorsRoute
+  AdminEventsRoute: typeof AdminEventsRoute
   AdminFestivalsRoute: typeof AdminFestivalsRoute
   AdminImageGalleryRoute: typeof AdminImageGalleryRoute
   AdminImagesRoute: typeof AdminImagesRoute
   AdminLoginRoute: typeof AdminLoginRoute
+  AdminPrivateArchiveRoute: typeof AdminPrivateArchiveRoute
   AdminSettingsRoute: typeof AdminSettingsRoute
   AdminTrashRoute: typeof AdminTrashRoute
+  AdminVideosRoute: typeof AdminVideosRoute
   AdminYearsRoute: typeof AdminYearsRoute
   AlbumAlbumIdRoute: typeof AlbumAlbumIdRoute
   AdminIndexRoute: typeof AdminIndexRoute
@@ -396,6 +435,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminEditorsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/events': {
+      id: '/admin/events'
+      path: '/admin/events'
+      fullPath: '/admin/events'
+      preLoaderRoute: typeof AdminEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/festivals': {
       id: '/admin/festivals'
       path: '/admin/festivals'
@@ -424,6 +470,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/private-archive': {
+      id: '/admin/private-archive'
+      path: '/admin/private-archive'
+      fullPath: '/admin/private-archive'
+      preLoaderRoute: typeof AdminPrivateArchiveRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/settings': {
       id: '/admin/settings'
       path: '/admin/settings'
@@ -436,6 +489,13 @@ declare module '@tanstack/react-router' {
       path: '/admin/trash'
       fullPath: '/admin/trash'
       preLoaderRoute: typeof AdminTrashRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/videos': {
+      id: '/admin/videos'
+      path: '/admin/videos'
+      fullPath: '/admin/videos'
+      preLoaderRoute: typeof AdminVideosRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/years': {
@@ -468,12 +528,15 @@ const rootRouteChildren: RootRouteChildren = {
   AdminAlbumsRoute: AdminAlbumsRoute,
   AdminAnalyticsRoute: AdminAnalyticsRoute,
   AdminEditorsRoute: AdminEditorsRoute,
+  AdminEventsRoute: AdminEventsRoute,
   AdminFestivalsRoute: AdminFestivalsRoute,
   AdminImageGalleryRoute: AdminImageGalleryRoute,
   AdminImagesRoute: AdminImagesRoute,
   AdminLoginRoute: AdminLoginRoute,
+  AdminPrivateArchiveRoute: AdminPrivateArchiveRoute,
   AdminSettingsRoute: AdminSettingsRoute,
   AdminTrashRoute: AdminTrashRoute,
+  AdminVideosRoute: AdminVideosRoute,
   AdminYearsRoute: AdminYearsRoute,
   AlbumAlbumIdRoute: AlbumAlbumIdRoute,
   AdminIndexRoute: AdminIndexRoute,

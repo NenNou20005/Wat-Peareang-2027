@@ -433,6 +433,119 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
         "timestamp" timestamp with time zone DEFAULT now() NOT NULL
       );`,
 
+      // private_albums
+      `CREATE TABLE IF NOT EXISTS "private_albums" (
+        "id" text PRIMARY KEY NOT NULL,
+        "title" text NOT NULL,
+        "description" text,
+        "cover_key" text,
+        "photo_count" integer DEFAULT 0 NOT NULL,
+        "created_by" text,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+      );`,
+      `CREATE INDEX IF NOT EXISTS "idx_private_albums_created_at" ON "private_albums" ("created_at");`,
+
+      // private_images
+      `CREATE TABLE IF NOT EXISTS "private_images" (
+        "id" text PRIMARY KEY NOT NULL,
+        "private_album_id" text NOT NULL,
+        "r2_key" text NOT NULL,
+        "filename" text NOT NULL,
+        "mime_type" text DEFAULT 'image/jpeg' NOT NULL,
+        "size" integer DEFAULT 0 NOT NULL,
+        "width" integer,
+        "height" integer,
+        "title" text,
+        "description" text,
+        "created_by" text,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+      );`,
+      `CREATE INDEX IF NOT EXISTS "idx_private_images_album_id" ON "private_images" ("private_album_id");`,
+      `CREATE INDEX IF NOT EXISTS "idx_private_images_created_at" ON "private_images" ("created_at");`,
+
+      // videos
+      `CREATE TABLE IF NOT EXISTS "videos" (
+        "id" text PRIMARY KEY NOT NULL,
+        "album_id" text NOT NULL,
+        "title" text NOT NULL,
+        "description" text,
+        "filename" text NOT NULL,
+        "mime_type" text DEFAULT 'video/mp4' NOT NULL,
+        "r2_key" text,
+        "url" text NOT NULL,
+        "thumbnail_url" text,
+        "size" integer DEFAULT 0 NOT NULL,
+        "duration" real,
+        "width" integer,
+        "height" integer,
+        "status" text DEFAULT 'published' NOT NULL,
+        "views_count" integer DEFAULT 0 NOT NULL,
+        "likes_count" integer DEFAULT 0 NOT NULL,
+        "uploaded_by" text,
+        "deleted_at" timestamp with time zone,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+      );`,
+      `CREATE INDEX IF NOT EXISTS "idx_videos_album_id" ON "videos" ("album_id");`,
+      `CREATE INDEX IF NOT EXISTS "idx_videos_status" ON "videos" ("status");`,
+      `CREATE INDEX IF NOT EXISTS "idx_videos_created_at" ON "videos" ("created_at");`,
+      `CREATE INDEX IF NOT EXISTS "idx_videos_album_status" ON "videos" ("album_id", "status");`,
+
+      // Foreign Keys for videos
+      `DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'videos_album_id_albums_id_fk') THEN
+          ALTER TABLE "videos" ADD CONSTRAINT "videos_album_id_albums_id_fk" FOREIGN KEY ("album_id") REFERENCES "albums"("id") ON DELETE cascade;
+        END IF;
+      END $$;`,
+
+      `DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'videos_uploaded_by_users_id_fk') THEN
+          ALTER TABLE "videos" ADD CONSTRAINT "videos_uploaded_by_users_id_fk" FOREIGN KEY ("uploaded_by") REFERENCES "users"("id") ON DELETE set null;
+        END IF;
+      END $$;`,
+
+      // private_videos
+      `CREATE TABLE IF NOT EXISTS "private_videos" (
+        "id" text PRIMARY KEY NOT NULL,
+        "private_album_id" text NOT NULL,
+        "r2_key" text NOT NULL,
+        "filename" text NOT NULL,
+        "mime_type" text DEFAULT 'video/mp4' NOT NULL,
+        "size" integer DEFAULT 0 NOT NULL,
+        "duration" real,
+        "width" integer,
+        "height" integer,
+        "title" text,
+        "description" text,
+        "created_by" text,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+      );`,
+      `CREATE INDEX IF NOT EXISTS "idx_private_videos_album_id" ON "private_videos" ("private_album_id");`,
+      `CREATE INDEX IF NOT EXISTS "idx_private_videos_created_at" ON "private_videos" ("created_at");`,
+
+      // Foreign Keys for private_videos
+      `DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'private_videos_album_id_fk') THEN
+          ALTER TABLE "private_videos" ADD CONSTRAINT "private_videos_album_id_fk" FOREIGN KEY ("private_album_id") REFERENCES "private_albums"("id") ON DELETE cascade;
+        END IF;
+      END $$;`,
+
+      `DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'private_videos_created_by_fk') THEN
+          ALTER TABLE "private_videos" ADD CONSTRAINT "private_videos_created_by_fk" FOREIGN KEY ("created_by") REFERENCES "users"("id") ON DELETE set null;
+        END IF;
+      END $$;`,
+
+      // Foreign Keys for private archive
+      `DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'private_images_album_id_fk') THEN
+          ALTER TABLE "private_images" ADD CONSTRAINT "private_images_album_id_fk" FOREIGN KEY ("private_album_id") REFERENCES "private_albums"("id") ON DELETE cascade;
+        END IF;
+      END $$;`,
+
       // Foreign Keys (applied safely)
       `DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'albums_festival_id_festivals_id_fk') THEN

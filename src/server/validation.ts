@@ -20,6 +20,8 @@ export const LIMITS = {
   uploadBatch: 50,
   /** Maximum accepted per-image byte size reported by the client. */
   imageBytes: 15 * 1024 * 1024,
+  /** Maximum accepted per-video byte size (100MB foundation limit). */
+  videoBytes: 100 * 1024 * 1024,
   id: 128,
   shortText: 200,
   mediumText: 500,
@@ -39,6 +41,15 @@ export const ALLOWED_IMAGE_MIME_TYPES = [
 ] as const;
 
 export type AllowedImageMimeType = (typeof ALLOWED_IMAGE_MIME_TYPES)[number];
+
+/** Video MIME types supported by the archive foundation. */
+export const ALLOWED_VIDEO_MIME_TYPES = [
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+] as const;
+
+export type AllowedVideoMimeType = (typeof ALLOWED_VIDEO_MIME_TYPES)[number];
 
 // --- Primitives -------------------------------------------------------------
 
@@ -267,6 +278,59 @@ export function detectImageMagicBytes(buffer: Buffer): AllowedImageMimeType | nu
     (buffer[11] === 0x66 || buffer[11] === 0x73)
   ) {
     return "image/avif";
+  }
+
+  return null;
+}
+
+/**
+ * Server-side MIME validation for video uploads by string.
+ */
+export function validateVideoMimeType(value: unknown): AllowedVideoMimeType | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return (ALLOWED_VIDEO_MIME_TYPES as readonly string[]).includes(normalized)
+    ? (normalized as AllowedVideoMimeType)
+    : null;
+}
+
+/**
+ * Binary magic bytes inspection for video uploads.
+ * Detects real video file signatures directly from bytes to prevent MIME spoofing.
+ * Supports: MP4 (ISO BMFF), WebM (EBML), and QuickTime (MOV).
+ */
+export function detectVideoMagicBytes(buffer: Buffer): AllowedVideoMimeType | null {
+  if (buffer.length < 12) return null;
+
+  // WebM: Starts with EBML Header (1A 45 DF A3)
+  if (
+    buffer[0] === 0x1a &&
+    buffer[1] === 0x45 &&
+    buffer[2] === 0xdf &&
+    buffer[3] === 0xa3
+  ) {
+    return "video/webm";
+  }
+
+  // MP4 / QuickTime: Check for 'ftyp' box at bytes 4-7
+  if (
+    buffer[4] === 0x66 && // 'f'
+    buffer[5] === 0x74 && // 't'
+    buffer[6] === 0x79 && // 'y'
+    buffer[7] === 0x70    // 'p'
+  ) {
+    const brand = buffer.subarray(8, 12).toString("latin1");
+    if (brand === "qt  ") {
+      return "video/quicktime";
+    }
+    // Standard MP4 brands: isom, iso2, mp41, mp42, dash, avc1, M4V , MSNV, etc.
+    return "video/mp4";
+  }
+
+  // Classic QuickTime MOV atoms at bytes 4-7: 'moov', 'mdat', 'wide', 'free'
+  const atom = buffer.subarray(4, 8).toString("latin1");
+  if (atom === "moov" || atom === "mdat" || atom === "wide" || atom === "free") {
+    return "video/quicktime";
   }
 
   return null;

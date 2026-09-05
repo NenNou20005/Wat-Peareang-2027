@@ -3,6 +3,7 @@ import {
   pgTable,
   text,
   integer,
+  real,
   serial,
   timestamp,
   boolean,
@@ -35,6 +36,37 @@ export const years = pgTable("years", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const events = pgTable(
+  "events",
+  {
+    id: text("id").primaryKey(),
+    festivalId: text("festival_id")
+      .notNull()
+      .references(() => festivals.id, { onDelete: "cascade" }),
+    year: integer("year")
+      .notNull()
+      .references(() => years.year, { onDelete: "cascade" }),
+    nameKh: text("name_kh").notNull(),
+    nameEn: text("name_en"),
+    description: text("description"),
+    eventDate: text("event_date"),
+    location: text("location").default("វត្តពារាំង").notNull(),
+    icon: text("icon").default("🎉").notNull(),
+    coverImage: text("cover_image"),
+    status: text("status").default("published").notNull(), // 'draft' | 'published'
+    sortOrder: integer("sort_order").default(0).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_events_festival_id").on(table.festivalId),
+    index("idx_events_year").on(table.year),
+    index("idx_events_festival_year").on(table.festivalId, table.year),
+    index("idx_events_status").on(table.status),
+    index("idx_events_sort_order").on(table.sortOrder),
+  ],
+);
+
 export const albums = pgTable(
   "albums",
   {
@@ -45,12 +77,14 @@ export const albums = pgTable(
     year: integer("year")
       .notNull()
       .references(() => years.year, { onDelete: "cascade" }),
+    eventId: text("event_id").references(() => events.id, { onDelete: "set null" }),
     title: text("title").notNull(),
     description: text("description"),
     location: text("location").default("វត្តពារាំង").notNull(),
     coverImage: text("cover_image"),
     photoCount: integer("photo_count").default(0).notNull(),
     status: text("status").default("published").notNull(), // 'draft' | 'pending_review' | 'approved' | 'published' | 'trashed'
+    sortOrder: integer("sort_order").default(0).notNull(),
     viewsCount: integer("views_count").default(0).notNull(),
     likesCount: integer("likes_count").default(0).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -59,7 +93,9 @@ export const albums = pgTable(
   (table) => [
     index("idx_albums_festival_id").on(table.festivalId),
     index("idx_albums_year").on(table.year),
+    index("idx_albums_event_id").on(table.eventId),
     index("idx_albums_status").on(table.status),
+    index("idx_albums_sort_order").on(table.sortOrder),
     index("idx_albums_views_count").on(table.viewsCount),
     index("idx_albums_likes_count").on(table.likesCount),
     index("idx_albums_festival_year").on(table.festivalId, table.year),
@@ -104,6 +140,45 @@ export const images = pgTable(
     index("idx_images_album_status").on(table.albumId, table.status),
   ],
 );
+
+export const videos = pgTable(
+  "videos",
+  {
+    id: text("id").primaryKey(),
+    albumId: text("album_id")
+      .notNull()
+      .references(() => albums.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    description: text("description"),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type").default("video/mp4").notNull(),
+    r2Key: text("r2_key"),
+    url: text("url").notNull(),
+    thumbnailUrl: text("thumbnail_url"),
+    size: integer("size").default(0).notNull(),
+    duration: real("duration"),
+    width: integer("width"),
+    height: integer("height"),
+    status: text("status").default("published").notNull(), // 'draft' | 'pending_review' | 'approved' | 'published' | 'trashed'
+    viewsCount: integer("views_count").default(0).notNull(),
+    likesCount: integer("likes_count").default(0).notNull(),
+    uploadedBy: text("uploaded_by").references(() => users.id, { onDelete: "set null" }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_videos_album_id").on(table.albumId),
+    index("idx_videos_status").on(table.status),
+    index("idx_videos_created_at").on(table.createdAt),
+    index("idx_videos_deleted_at").on(table.deletedAt),
+    index("idx_videos_uploaded_by").on(table.uploadedBy),
+    index("idx_videos_album_status").on(table.albumId, table.status),
+  ],
+);
+
+export type Video = typeof videos.$inferSelect;
+export type InsertVideo = typeof videos.$inferInsert;
 
 // --- AUTHENTICATION & USERS ---
 
@@ -352,13 +427,36 @@ export const activityLogs = pgTable(
   ],
 );
 
+export const siteSettings = pgTable("site_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  description: text("description"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export type SiteSetting = typeof siteSettings.$inferSelect;
+
 // --- RELATIONS ---
 
 export const festivalsRelations = relations(festivals, ({ many }) => ({
+  events: many(events),
   albums: many(albums),
 }));
 
 export const yearsRelations = relations(years, ({ many }) => ({
+  events: many(events),
+  albums: many(albums),
+}));
+
+export const eventsRelations = relations(events, ({ one, many }) => ({
+  festival: one(festivals, {
+    fields: [events.festivalId],
+    references: [festivals.id],
+  }),
+  yearRecord: one(years, {
+    fields: [events.year],
+    references: [years.year],
+  }),
   albums: many(albums),
 }));
 
@@ -371,7 +469,12 @@ export const albumsRelations = relations(albums, ({ one, many }) => ({
     fields: [albums.year],
     references: [years.year],
   }),
+  event: one(events, {
+    fields: [albums.eventId],
+    references: [events.id],
+  }),
   images: many(images),
+  videos: many(videos),
 }));
 
 export const imagesRelations = relations(images, ({ one, many }) => ({
@@ -387,9 +490,21 @@ export const imagesRelations = relations(images, ({ one, many }) => ({
   reports: many(reports),
 }));
 
+export const videosRelations = relations(videos, ({ one }) => ({
+  album: one(albums, {
+    fields: [videos.albumId],
+    references: [albums.id],
+  }),
+  uploader: one(users, {
+    fields: [videos.uploadedBy],
+    references: [users.id],
+  }),
+}));
+
 export const usersRelations = relations(users, ({ many }) => ({
   sessions: many(sessions),
   uploadedImages: many(images),
+  uploadedVideos: many(videos),
   favorites: many(favorites),
   likes: many(likes),
   resolvedReports: many(reports),
@@ -401,3 +516,112 @@ export const sessionsRelations = relations(sessions, ({ one }) => ({
     references: [users.id],
   }),
 }));
+
+// --- PRIVATE ARCHIVE TABLES ---
+
+export const privateAlbums = pgTable(
+  "private_albums",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    description: text("description"),
+    coverKey: text("cover_key"),
+    photoCount: integer("photo_count").default(0).notNull(),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_private_albums_created_at").on(table.createdAt),
+  ],
+);
+
+export const privateImages = pgTable(
+  "private_images",
+  {
+    id: text("id").primaryKey(),
+    privateAlbumId: text("private_album_id")
+      .notNull()
+      .references(() => privateAlbums.id, { onDelete: "cascade" }),
+    r2Key: text("r2_key").notNull(),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type").default("image/jpeg").notNull(),
+    size: integer("size").default(0).notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    title: text("title"),
+    description: text("description"),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_private_images_album_id").on(table.privateAlbumId),
+    index("idx_private_images_created_at").on(table.createdAt),
+  ],
+);
+
+export const privateVideos = pgTable(
+  "private_videos",
+  {
+    id: text("id").primaryKey(),
+    privateAlbumId: text("private_album_id")
+      .notNull()
+      .references(() => privateAlbums.id, { onDelete: "cascade" }),
+    r2Key: text("r2_key").notNull(),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type").default("video/mp4").notNull(),
+    size: integer("size").default(0).notNull(),
+    duration: real("duration"),
+    width: integer("width"),
+    height: integer("height"),
+    title: text("title"),
+    description: text("description"),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_private_videos_album_id").on(table.privateAlbumId),
+    index("idx_private_videos_created_at").on(table.createdAt),
+  ],
+);
+
+export type PrivateAlbum = typeof privateAlbums.$inferSelect;
+export type InsertPrivateAlbum = typeof privateAlbums.$inferInsert;
+export type PrivateImage = typeof privateImages.$inferSelect;
+export type InsertPrivateImage = typeof privateImages.$inferInsert;
+export type PrivateVideo = typeof privateVideos.$inferSelect;
+export type InsertPrivateVideo = typeof privateVideos.$inferInsert;
+
+export const privateAlbumsRelations = relations(privateAlbums, ({ one, many }) => ({
+  creator: one(users, {
+    fields: [privateAlbums.createdBy],
+    references: [users.id],
+  }),
+  images: many(privateImages),
+  videos: many(privateVideos),
+}));
+
+export const privateImagesRelations = relations(privateImages, ({ one }) => ({
+  album: one(privateAlbums, {
+    fields: [privateImages.privateAlbumId],
+    references: [privateAlbums.id],
+  }),
+  uploader: one(users, {
+    fields: [privateImages.createdBy],
+    references: [users.id],
+  }),
+}));
+
+export const privateVideosRelations = relations(privateVideos, ({ one }) => ({
+  album: one(privateAlbums, {
+    fields: [privateVideos.privateAlbumId],
+    references: [privateAlbums.id],
+  }),
+  uploader: one(users, {
+    fields: [privateVideos.createdBy],
+    references: [users.id],
+  }),
+}));
+

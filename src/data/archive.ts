@@ -185,6 +185,7 @@ export type Album = {
   year: number;
   location: string;
   photoCount: number;
+  videoCount?: number | undefined;
   title: string;
   description?: string | null | undefined;
   coverImage?: string | null | undefined;

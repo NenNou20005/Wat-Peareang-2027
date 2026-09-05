@@ -1,5 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { User, Phone, Mail, Facebook, ArrowLeft, ExternalLink, ShieldCheck } from "lucide-react";
+import { useDeveloperProfileImage } from "@/hooks/useArchiveData";
+import { resolveImageUrl } from "@/lib/asset-resolver";
 
 export const Route = createFileRoute("/developer")({
   head: () => ({
@@ -21,6 +23,10 @@ export const Route = createFileRoute("/developer")({
 });
 
 function DeveloperPage() {
+  const { data: customProfileUrl } = useDeveloperProfileImage();
+  const defaultProfileImg = "/assets/developer-profile.svg";
+  const displayProfileUrl = customProfileUrl ? resolveImageUrl(customProfileUrl) : defaultProfileImg;
+
   return (
     <div className="mx-auto max-w-[1000px] px-4 py-10 lg:px-8">
       {/* Breadcrumb / Back Link */}
@@ -68,9 +74,9 @@ function DeveloperPage() {
                 {/* Profile Image Container */}
                 <div className="developer-glow-pulse relative flex h-[105px] w-[105px] sm:h-[125px] sm:w-[125px] md:h-[135px] md:w-[135px] items-center justify-center rounded-full bg-secondary/40 p-1 transition-transform duration-300 ease-out group-hover:scale-[1.02]">
                   <img
-                    src="/assets/developer-profile.svg"
+                    src={displayProfileUrl}
                     alt="Ven Shal Vannou - Developer Profile"
-                    className="h-full w-full rounded-full object-cover shadow-inner"
+                    className="h-full w-full rounded-full object-cover shadow-inner aspect-square"
                     loading="eager"
                   />
                 </div>

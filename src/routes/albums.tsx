@@ -39,9 +39,10 @@ function AlbumsPage() {
         <YearPills value={year} onChange={setYear} />
         <FestivalPills
           selected={selected}
+          activeYear={year}
           onToggle={(id) =>
             setSelected((prev) =>
-              prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+              prev.includes(id) ? [] : [id],
             )
           }
           onClear={() => setSelected([])}

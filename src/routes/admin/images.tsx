@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useState, useMemo, useEffect } from "react";
 import { AdminLayout } from "@/components/admin/AdminLayout";
 import { useAuth } from "@/hooks/useAuth";
@@ -200,27 +200,30 @@ function AdminImagesPage() {
     });
   };
 
-  // Open Upload modal with defaults
+  // Open Upload modal with defaults aligned strictly with selectedAlbum if available
   const openUploadModal = () => {
-    if (selectedYear !== "all") {
-      setUploadYear(Number(selectedYear));
-    } else if (years.length > 0 && years[0]) {
-      setUploadYear(years[0]);
-    }
+    const targetAlbum =
+      selectedAlbum !== "all" ? albums.find((a) => a.id === selectedAlbum) : undefined;
 
-    if (selectedFestival !== "all") {
-      setUploadFestivalId(selectedFestival);
-    } else if (festivals.length > 0 && festivals[0]) {
-      setUploadFestivalId(festivals[0].id);
-    }
-
-    const isValidSelectedAlbum =
-      selectedAlbum !== "all" && albums.some((a) => a.id === selectedAlbum);
-
-    if (isValidSelectedAlbum) {
-      setUploadAlbumId(selectedAlbum);
+    if (targetAlbum) {
+      // Align Year and Festival directly with the selected album to ensure 100% hierarchy match
+      setUploadYear(targetAlbum.year);
+      setUploadFestivalId(targetAlbum.festivalId);
+      setUploadAlbumId(targetAlbum.id);
     } else {
-      // Do NOT automatically fallback to an arbitrary album - require explicit selection or creation
+      // Fallback behavior when no specific album is selected
+      if (selectedYear !== "all") {
+        setUploadYear(Number(selectedYear));
+      } else if (years.length > 0 && years[0]) {
+        setUploadYear(years[0]);
+      }
+
+      if (selectedFestival !== "all") {
+        setUploadFestivalId(selectedFestival);
+      } else if (festivals.length > 0 && festivals[0]) {
+        setUploadFestivalId(festivals[0].id);
+      }
+
       setUploadAlbumId("");
     }
     setIsUploadOpen(true);
@@ -431,6 +434,32 @@ function AdminImagesPage() {
   return (
     <AdminLayout requiredPermission="view_images">
       <div className="space-y-6">
+        {/* Media Switcher Tabs */}
+        <div className="flex items-center gap-2 border-b border-border/60 pb-3">
+          <Button
+            variant="secondary"
+            className="rounded-xl px-4 py-2 text-sm font-bold bg-gold/15 text-gold hover:bg-gold/20 shadow-xs"
+          >
+            <span className="mr-2">🖼️</span> គ្រប់គ្រងរូបភាព (Images)
+          </Button>
+          <Button
+            asChild
+            variant="ghost"
+            className="rounded-xl px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+          >
+            <Link
+              to="/admin/videos"
+              search={{
+                albumId: selectedAlbum !== "all" ? selectedAlbum : undefined,
+                year: selectedYear !== "all" ? selectedYear : undefined,
+                festivalId: selectedFestival !== "all" ? selectedFestival : undefined,
+              }}
+            >
+              <span className="mr-2">🎬</span> គ្រប់គ្រងវីដេអូ (Videos)
+            </Link>
+          </Button>
+        </div>
+
         {/* Header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -603,40 +632,40 @@ function AdminImagesPage() {
         </div>
 
         {/* Direct Images Grid */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-          {loading ? (
-            <div className="col-span-full py-16 text-center text-xs text-muted-foreground">
-              <RefreshCw className="mx-auto mb-2 h-6 w-6 animate-spin text-gold" />
-              កំពុងទាញយករូបភាពពីបណ្ណសារ...
-            </div>
-          ) : images.length === 0 ? (
-            <div className="col-span-full py-16 text-center text-xs text-muted-foreground rounded-3xl border border-border/80 bg-card space-y-3">
-              <p>រកមិនឃើញរូបភាពដែលត្រូវនឹងការជ្រើសរើសឡើយ។</p>
-              {isFilterActive && (
-                <Button
-                  onClick={handleResetFilters}
-                  variant="outline"
-                  size="sm"
-                  className="rounded-full"
-                >
-                  ជម្រះការច្រោះទាំងអស់ (Show All)
-                </Button>
-              )}
-            </div>
-          ) : (
-            images.map((img, idx) => (
+        {loading ? (
+          <div className="py-16 text-center text-xs text-muted-foreground">
+            <RefreshCw className="mx-auto mb-2 h-6 w-6 animate-spin text-gold" />
+            កំពុងទាញយករូបភាពពីបណ្ណសារ...
+          </div>
+        ) : images.length === 0 ? (
+          <div className="py-16 text-center text-xs text-muted-foreground rounded-3xl border border-border/80 bg-card space-y-3">
+            <p>រកមិនឃើញរូបភាពដែលត្រូវនឹងការជ្រើសរើសឡើយ។</p>
+            {isFilterActive && (
+              <Button
+                onClick={handleResetFilters}
+                variant="outline"
+                size="sm"
+                className="rounded-full"
+              >
+                ជម្រះការច្រោះទាំងអស់ (Show All)
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="columns-2 gap-3.5 sm:gap-4 [column-fill:_balance] sm:columns-3 md:columns-4 lg:columns-5 xl:columns-6">
+            {images.map((img, idx) => (
               <div
                 key={img.id}
-                className="group relative overflow-hidden rounded-2xl border border-border/80 bg-card shadow-soft transition-all hover:shadow-card flex flex-col justify-between"
+                className="group relative mb-3.5 sm:mb-4 block w-full break-inside-avoid overflow-hidden rounded-2xl border border-border/80 bg-card shadow-soft transition-all duration-300 hover:shadow-card hover:-translate-y-0.5"
               >
                 <div
                   onClick={() => setLightboxIndex(idx)}
-                  className="aspect-square w-full overflow-hidden bg-secondary cursor-pointer relative"
+                  className="relative w-full overflow-hidden bg-secondary cursor-pointer"
                 >
                   <img
                     src={resolveImageUrl(img.thumbnailUrl || img.url)}
                     alt={img.title}
-                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    className="w-full h-auto block object-contain transition-transform duration-300 group-hover:scale-105"
                     loading="lazy"
                     onError={(e) => {
                       (e.target as HTMLImageElement).src = resolveImageUrl(null);
@@ -700,9 +729,9 @@ function AdminImagesPage() {
                   )}
                 </div>
               </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        )}
 
         {/* Pagination Bar */}
         {totalPages > 1 && (

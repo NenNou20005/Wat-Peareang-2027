@@ -16,6 +16,8 @@ import {
   isMacOS,
   type AdminShortcutConfig,
 } from "@/config/adminShortcut";
+import { HeroImageManager } from "@/components/admin/HeroImageManager";
+import { DeveloperProfileManager } from "@/components/admin/DeveloperProfileManager";
 
 export const Route = createFileRoute("/admin/settings")({
   head: () => ({
@@ -97,6 +99,19 @@ function AdminSettingsPage() {
       let primaryKey = e.key;
       if (primaryKey.length === 1) {
         primaryKey = primaryKey.toUpperCase();
+      }
+
+      // Validate key
+      if (!/^[A-Z0-9]$/.test(primaryKey)) {
+        toast.error("សូមជ្រើសរើសអក្សរ A-Z ឬលេខ 0-9 សម្រាប់គ្រាប់ចុចចម្បង។");
+        return;
+      }
+
+      // Validate modifiers: must have at least one modifier
+      const hasModifier = e.ctrlKey || e.altKey || e.shiftKey || e.metaKey;
+      if (!hasModifier) {
+        toast.error("Shortcut ត្រូវតែមានយ៉ាងតិច modifier key មួយ (Ctrl, Alt, Shift ឬ Cmd/Win)។");
+        return;
       }
 
       const newConfig: AdminShortcutConfig = {
@@ -237,11 +252,17 @@ function AdminSettingsPage() {
         <div>
           <h1 className="font-display text-2xl font-bold text-foreground">⚙️ ការកំណត់ប្រព័ន្ធ</h1>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            គ្រប់គ្រងព័ត៌មានផ្ទាល់ខ្លួន សុវត្ថិភាពគណនី និងផ្លាស់ប្តូរគ្រាប់ចុចកាត់ Admin (Shortcut)។
+            គ្រប់គ្រងរូបភាពទំព័រដើម រូបថតអ្នកអភិវឌ្ឍន៍ ព័ត៌មានផ្ទាល់ខ្លួន សុវត្ថិភាពគណនី និងផ្លាស់ប្តូរគ្រាប់ចុចកាត់ Admin (Shortcut)។
           </p>
         </div>
 
-        {/* 1. Admin Keyboard Shortcut Settings Card */}
+        {/* 1. Homepage Hero Image Manager */}
+        <HeroImageManager />
+
+        {/* 2. Developer Profile Photo Manager */}
+        <DeveloperProfileManager />
+
+        {/* 3. Admin Keyboard Shortcut Settings Card */}
         <div
           id="admin-shortcut-settings-card"
           className="rounded-3xl border border-border/80 bg-card p-6 shadow-soft space-y-5"

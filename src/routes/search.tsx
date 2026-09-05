@@ -1,13 +1,14 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { zodValidator, fallback } from "@tanstack/zod-adapter";
 import { z } from "zod";
 import { useState, useEffect, useRef } from "react";
-import { Search as SearchIcon, TrendingUp, Sparkles, AlertCircle } from "lucide-react";
+import { Search as SearchIcon, TrendingUp, Sparkles, AlertCircle, Film, Images } from "lucide-react";
 import { AlbumGrid } from "@/components/site/YearSection";
 import { toKhmerNumber, type Album } from "@/data/archive";
-import { useSearchArchive } from "@/hooks/useArchiveData";
+import { useSearchArchive, useSearchVideos } from "@/hooks/useArchiveData";
 import { useTrendingSearches } from "@/hooks/useSearchAnalytics";
 import { trackSearch, trackSearchClick } from "@/lib/analytics";
+import { cn } from "@/lib/utils";
 
 const searchSchema = z.object({
   q: fallback(z.string(), "").default(""),
@@ -20,10 +21,10 @@ export const Route = createFileRoute("/search")({
       { title: "ស្វែងរក — បណ្ណសារបុណ្យខ្មែរ" },
       {
         name: "description",
-        content: "ស្វែងរក Album បុណ្យខ្មែរតាមឈ្មោះបុណ្យ ឆ្នាំ ឬទីកន្លែង។",
+        content: "ស្វែងរក Album និងវីដេអូបុណ្យខ្មែរតាមឈ្មោះបុណ្យ ឆ្នាំ ឬទីកន្លែង។",
       },
       { property: "og:title", content: "ស្វែងរកបណ្ណសារបុណ្យខ្មែរ" },
-      { property: "og:description", content: "ស្វែងរកបុណ្យ ឆ្នាំ ទីកន្លែង ឬ Album។" },
+      { property: "og:description", content: "ស្វែងរកបុណ្យ ឆ្នាំ ទីកន្លែង Album ឬវីដេអូ។" },
     ],
   }),
   component: SearchPage,
@@ -33,14 +34,21 @@ function SearchPage() {
   const { q } = Route.useSearch();
   const navigate = useNavigate({ from: "/search" });
   const [term, setTerm] = useState(q);
+  const [searchTab, setSearchTab] = useState<"albums" | "videos">("albums");
   const { data: results = [], isLoading } = useSearchArchive(q);
+  const { data: videoResults = [] } = useSearchVideos(q);
   const { data: trendingSuggestions = [] } = useTrendingSearches(8);
   const trackedRef = useRef<string>("");
 
-  // Sync input value when route query changes
+  // Sync input value and active tab when route query changes
   useEffect(() => {
     setTerm(q);
-  }, [q]);
+    if (results.length === 0 && videoResults.length > 0) {
+      setSearchTab("videos");
+    } else {
+      setSearchTab("albums");
+    }
+  }, [q, results.length, videoResults.length]);
 
   // Track search query execution once search completes
   useEffect(() => {
@@ -71,7 +79,7 @@ function SearchPage() {
           <span>🔍</span> ស្វែងរកបណ្ណសារ
         </h1>
         <p className="text-sm text-muted-foreground">
-          ស្វែងរកតាមឈ្មោះពិធីបុណ្យ ឆ្នាំ (ឧ. ២០២៤ ឬ 2024) ទីតាំងវត្ត ឬកម្រងរូបភាព
+          ស្វែងរកតាមឈ្មោះពិធីបុណ្យ ឆ្នាំ (ឧ. ២០២៤ ឬ 2024) ទីតាំងវត្ត ឬកម្រងរូបភាព និងវីដេអូ
         </p>
       </div>
 
@@ -122,20 +130,134 @@ function SearchPage() {
             <p className="text-sm text-muted-foreground">
               រកឃើញ{" "}
               <span className="font-semibold text-foreground">{toKhmerNumber(results.length)}</span>{" "}
-              Albums សម្រាប់ “<span className="font-medium text-gold">{q}</span>”
+              Albums
+              {videoResults.length > 0 && (
+                <>
+                  {" "}និង{" "}
+                  <span className="font-semibold text-foreground">{toKhmerNumber(videoResults.length)}</span>{" "}
+                  វីដេអូ
+                </>
+              )}{" "}
+              សម្រាប់ “<span className="font-medium text-gold">{q}</span>”
             </p>
-            {results.length > 0 && (
+            {(results.length > 0 || videoResults.length > 0) && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Sparkles className="h-3.5 w-3.5 text-gold" /> លទ្ធផលត្រូវគ្នាល្អបំផុត
               </span>
             )}
           </div>
 
-          {results.length > 0 ? (
-            <div className="mt-6">
-              <AlbumGrid items={results} onSelectAlbum={handleSelectAlbum} />
+          {/* Switcher Tabs when video results exist */}
+          {videoResults.length > 0 && (
+            <div className="mt-4 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setSearchTab("albums")}
+                className={cn(
+                  "flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-medium cursor-pointer transition-all",
+                  searchTab === "albums"
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "bg-secondary/70 text-secondary-foreground hover:bg-secondary",
+                )}
+              >
+                <Images className="h-3.5 w-3.5" /> Albums ({toKhmerNumber(results.length)})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSearchTab("videos")}
+                className={cn(
+                  "flex items-center gap-2 rounded-full px-4 py-1.5 text-xs font-medium cursor-pointer transition-all",
+                  searchTab === "videos"
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "bg-secondary/70 text-secondary-foreground hover:bg-secondary",
+                )}
+              >
+                <Film className="h-3.5 w-3.5" /> វីដេអូ ({toKhmerNumber(videoResults.length)})
+              </button>
             </div>
-          ) : (
+          )}
+
+          {/* Tab Content: Albums */}
+          {searchTab === "albums" && (
+            <>
+              {results.length > 0 ? (
+                <div className="mt-6">
+                  <AlbumGrid items={results} onSelectAlbum={handleSelectAlbum} />
+                </div>
+              ) : videoResults.length === 0 ? null : (
+                <div className="mt-10 rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                  មិនមាន Albums ត្រូវគ្នានឹង “{q}” ទេ។ សូមពិនិត្យមើលផ្ទាំង «វីដេអូ» ខាងលើ។
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Tab Content: Videos */}
+          {searchTab === "videos" && (
+            <>
+              {videoResults.length > 0 ? (
+                <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                  {videoResults.map((v) => (
+                    <div
+                      key={v.id}
+                      className="group flex flex-col overflow-hidden rounded-3xl border border-border/80 bg-card p-3 shadow-soft transition-all hover:shadow-card"
+                    >
+                      <div className="relative aspect-video w-full overflow-hidden rounded-2xl bg-black">
+                        <video
+                          controls
+                          preload="metadata"
+                          playsInline
+                          poster={v.thumbnailUrl || undefined}
+                          src={v.url}
+                          className="h-full w-full object-contain"
+                        />
+                      </div>
+                      <div className="mt-3 flex flex-1 flex-col justify-between space-y-2 px-1">
+                        <div>
+                          <h4 className="font-medium text-foreground text-sm line-clamp-2" title={v.title}>
+                            {v.title}
+                          </h4>
+                          {v.albumTitle && (
+                            <Link
+                              to="/album/$albumId"
+                              params={{ albumId: v.albumId }}
+                              className="text-xs text-primary hover:underline truncate mt-1 inline-block"
+                            >
+                              📁 {v.albumTitle} {v.year ? `(${toKhmerNumber(v.year)})` : ""}
+                            </Link>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/40 text-[11px] text-muted-foreground">
+                          {v.duration && v.duration > 0 ? (
+                            <span className="rounded-md bg-secondary px-2 py-0.5 font-medium">
+                              ⏱️ {Math.floor(v.duration / 60)}:{(v.duration % 60).toString().padStart(2, "0")}
+                            </span>
+                          ) : null}
+                          {v.width && v.height ? (
+                            <span className="rounded-md bg-secondary px-2 py-0.5 font-medium">
+                              📐 {v.width}×{v.height}
+                            </span>
+                          ) : null}
+                          {v.size && v.size > 0 ? (
+                            <span className="rounded-md bg-secondary px-2 py-0.5 font-medium">
+                              📦 {(v.size / (1024 * 1024)).toFixed(1)} MB
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-10 rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+                  មិនមានវីដេអូត្រូវគ្នានឹង “{q}” ទេ។
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Empty State when both are 0 */}
+          {results.length === 0 && videoResults.length === 0 && (
             <div className="mt-12 rounded-3xl border border-dashed border-border bg-card/50 p-10 text-center">
               <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-gold/10 text-2xl text-gold">
                 <AlertCircle className="h-7 w-7 text-gold" />

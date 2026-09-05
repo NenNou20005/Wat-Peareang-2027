@@ -38,6 +38,7 @@ import {
   getPostgresArchiveGrowth,
   getPostgresAdminActivitySummary,
   generatePostgresExportReport,
+  validateHierarchyIntegrity,
   type AdminAnalyticsOverview,
   type ViewsSeriesPoint,
   type TopAlbumItem,
@@ -76,12 +77,14 @@ export interface StoredAlbum {
   id: string;
   festivalId: string;
   year: number;
+  eventId?: string | null | undefined;
   location: string;
   title: string;
   description?: string | undefined;
   photoCount: number;
   coverImage?: string | undefined;
   status?: string | undefined;
+  sortOrder?: number | undefined;
   viewsCount?: number | undefined;
   likesCount?: number | undefined;
   createdAt: string;
@@ -961,6 +964,80 @@ class Database {
     return shortcut;
   }
 
+  // --- SITE SETTINGS (HOMEPAGE HERO, ETC.) ---
+  public async getSiteSettingAsync(key: string): Promise<string | null> {
+    const drizzle = getDrizzleDb();
+    if (drizzle && isPostgresConfigured()) {
+      try {
+        const rows = await drizzle
+          .select({ value: schema.siteSettings.value })
+          .from(schema.siteSettings)
+          .where(eq(schema.siteSettings.key, key))
+          .limit(1);
+        if (rows && rows.length > 0 && rows[0]) {
+          return rows[0].value ?? null;
+        }
+      } catch (err) {
+        console.warn(`[getSiteSettingAsync]: Error reading setting ${key} from PostgreSQL:`, err);
+      }
+    }
+    return (this.data as any).siteSettings?.[key] || null;
+  }
+
+  public async setSiteSettingAsync(
+    key: string,
+    value: string,
+    description?: string,
+  ): Promise<void> {
+    const drizzle = getDrizzleDb();
+    if (drizzle && isPostgresConfigured()) {
+      try {
+        await drizzle
+          .insert(schema.siteSettings)
+          .values({
+            key,
+            value,
+            description: description || null,
+            updatedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: schema.siteSettings.key,
+            set: {
+              value,
+              description: description || null,
+              updatedAt: new Date(),
+            },
+          });
+      } catch (err) {
+        console.error(`[setSiteSettingAsync]: Error saving setting ${key} to PostgreSQL:`, err);
+      }
+    }
+
+    if (!(this.data as any).siteSettings) {
+      (this.data as any).siteSettings = {};
+    }
+    (this.data as any).siteSettings[key] = value;
+    this.save();
+  }
+
+  public async deleteSiteSettingAsync(key: string): Promise<void> {
+    const drizzle = getDrizzleDb();
+    if (drizzle && isPostgresConfigured()) {
+      try {
+        await drizzle
+          .delete(schema.siteSettings)
+          .where(eq(schema.siteSettings.key, key));
+      } catch (err) {
+        console.error(`[deleteSiteSettingAsync]: Error deleting setting ${key} from PostgreSQL:`, err);
+      }
+    }
+
+    if ((this.data as any).siteSettings) {
+      delete (this.data as any).siteSettings[key];
+    }
+    this.save();
+  }
+
   // --- SESSIONS ---
   public async createSessionAsync(
     userId: string,
@@ -1508,12 +1585,34 @@ class Database {
 
         if (pgAlbum) {
           foundInPg = true;
+          const festId = updates.festivalId || pgAlbum.festivalId;
+          const yr = updates.year || pgAlbum.year;
+          const evId =
+            updates.eventId !== undefined
+              ? (updates.eventId ? updates.eventId.trim() : null)
+              : pgAlbum.eventId;
+
+          // Strict validation of hierarchy integrity
+          const validation = await validateHierarchyIntegrity({
+            festivalId: festId,
+            year: yr,
+            eventId: evId,
+          });
+
+          if (!validation.valid) {
+            return {
+              success: false,
+              error: validation.error || "Hierarchy validation failed",
+            };
+          }
+
           albumTitle = updates.title?.trim() || pgAlbum.title;
           await drizzle
             .update(schema.albums)
             .set({
-              festivalId: updates.festivalId || pgAlbum.festivalId,
-              year: updates.year || pgAlbum.year,
+              festivalId: festId,
+              year: yr,
+              eventId: evId,
               title: updates.title !== undefined ? updates.title.trim() : pgAlbum.title,
               description:
                 updates.description !== undefined
@@ -1528,6 +1627,7 @@ class Database {
                   ? updates.coverImage?.trim() || null
                   : pgAlbum.coverImage,
               status: updates.status || pgAlbum.status || "published",
+              sortOrder: updates.sortOrder !== undefined ? updates.sortOrder : pgAlbum.sortOrder,
               updatedAt: new Date(),
             })
             .where(eq(schema.albums.id, id));

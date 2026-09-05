@@ -5,6 +5,7 @@ export interface ApiPhoto {
   id: string;
   albumId?: string;
   src: string;
+  rawUrl?: string | null;
   caption: string;
   tall: boolean;
   thumbnailUrl?: string | null;
@@ -88,6 +89,7 @@ export async function fetchAlbums(filters?: {
     if (json.success && Array.isArray(json.data)) {
       return json.data.map((a: Album) => ({
         ...a,
+        coverImage: a.coverImage ? resolveImageUrl(a.coverImage, a.festivalId) : undefined,
         festival: {
           ...a.festival,
           cover: resolveImageUrl(a.festival?.cover, a.festivalId),
@@ -140,7 +142,9 @@ export async function fetchAlbumPhotos(albumId: string): Promise<ApiPhoto[]> {
     if (json.success && Array.isArray(json.data)) {
       return json.data.map((p: ApiPhoto) => ({
         ...p,
+        rawUrl: p.src || p.thumbnailUrl || "",
         src: resolveImageUrl(p.src),
+        thumbnailUrl: p.thumbnailUrl ? resolveImageUrl(p.thumbnailUrl) : resolveImageUrl(p.src),
       }));
     }
   } catch (e) {
@@ -239,6 +243,8 @@ export interface ArchiveImageParams {
   search?: string | undefined;
   page?: number | undefined;
   limit?: number | undefined;
+  diverse?: boolean | undefined;
+  all?: boolean | undefined;
 }
 
 /**
@@ -249,12 +255,14 @@ export async function fetchArchiveImages(
 ): Promise<PaginatedImagesResponse> {
   try {
     const qs = new URLSearchParams();
+    if (params?.all) qs.set("all", "true");
     if (params?.year && params.year !== "all") qs.set("year", String(params.year));
     if (params?.festivalId && params.festivalId !== "all") qs.set("festivalId", params.festivalId);
     if (params?.albumId && params.albumId !== "all") qs.set("albumId", params.albumId);
     if (params?.search?.trim()) qs.set("search", params.search.trim());
     if (params?.page) qs.set("page", String(params.page));
     if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.diverse) qs.set("diverse", "true");
 
     const queryString = qs.toString() ? `?${qs.toString()}` : "";
     const res = await fetch(`/api/archive/images${queryString}`);
@@ -289,4 +297,105 @@ export async function fetchArchiveImages(
     page: 1,
     limit: 24,
   };
+}
+
+export interface SlideshowAlbum {
+  id: string;
+  title: string;
+  year: number;
+  festivalId: string;
+  festivalName: string;
+  festivalEmoji: string;
+  coverImage?: string;
+  location?: string;
+  images: GalleryImage[];
+}
+
+/**
+ * Fetch all albums with their full set of active images for the Home Archive Slideshow
+ */
+export async function fetchSlideshowAlbums(): Promise<SlideshowAlbum[]> {
+  try {
+    const res = await fetch("/api/archive/slideshow-albums");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.success && Array.isArray(json.data)) {
+      return json.data.map((album: SlideshowAlbum) => ({
+        ...album,
+        coverImage: album.coverImage ? resolveImageUrl(album.coverImage, album.festivalId) : undefined,
+        images: (album.images || []).map((img: GalleryImage) => ({
+          ...img,
+          url: resolveImageUrl(img.url),
+          thumbnailUrl: img.thumbnailUrl
+            ? resolveImageUrl(img.thumbnailUrl)
+            : resolveImageUrl(img.url),
+        })),
+      }));
+    }
+  } catch (e) {
+    console.warn("[API Client] Failed to fetch slideshow albums:", e);
+  }
+
+  return [];
+}
+
+export interface ApiVideo {
+  id: string;
+  albumId: string;
+  albumTitle?: string;
+  festivalName?: string;
+  year?: number;
+  title: string;
+  filename?: string | null;
+  url: string;
+  thumbnailUrl?: string | null;
+  duration?: number | null;
+  width?: number | null;
+  height?: number | null;
+  size?: number | null;
+  mimeType?: string | null;
+  viewsCount?: number;
+  likesCount?: number;
+  status?: string;
+  createdAt?: string;
+}
+
+/**
+ * Fetch published videos for a specific album from PostgreSQL via API
+ */
+export async function fetchAlbumVideos(albumId: string): Promise<ApiVideo[]> {
+  try {
+    const res = await fetch(`/api/archive/albums/${encodeURIComponent(albumId)}/videos`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.success && Array.isArray(json.data)) {
+      return json.data;
+    }
+  } catch (e) {
+    console.warn(`[API Client] Failed to fetch videos for album "${albumId}":`, e);
+  }
+
+  return [];
+}
+
+/**
+ * Search public videos in PostgreSQL via API
+ */
+export async function fetchPublicVideos(params?: { search?: string; albumId?: string }): Promise<ApiVideo[]> {
+  try {
+    const sp = new URLSearchParams();
+    if (params?.search) sp.set("q", params.search);
+    if (params?.albumId) sp.set("albumId", params.albumId);
+    const qs = sp.toString() ? `?${sp.toString()}` : "";
+    const res = await fetch(`/api/archive/videos${qs}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.success && Array.isArray(json.data)) {
+      return json.data;
+    }
+  } catch (e) {
+    console.warn("[API Client] Failed to fetch public videos:", e);
+  }
+
+  return [];
 }

@@ -201,18 +201,18 @@ function FavoritesPage() {
                 {displayImages.map((img, idx) => (
                   <div
                     key={img.id}
-                    className="group relative mb-4 block w-full overflow-hidden rounded-2xl bg-card shadow-soft transition-all hover:shadow-card"
+                    className="group relative mb-4 block w-full break-inside-avoid overflow-hidden rounded-2xl bg-card shadow-soft transition-all hover:shadow-card hover:-translate-y-0.5"
                   >
                     <button
                       type="button"
                       onClick={() => setLightboxIndex(idx)}
-                      className="block w-full overflow-hidden text-left"
+                      className="block w-full overflow-hidden text-left cursor-pointer"
                     >
                       <img
                         src={img.url}
                         alt={img.title}
                         loading="lazy"
-                        className="w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        className="w-full h-auto block object-contain transition-transform duration-500 group-hover:scale-105"
                       />
                     </button>
 

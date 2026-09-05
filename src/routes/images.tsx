@@ -342,22 +342,30 @@ function PublicImageGalleryPage() {
                     className="group cursor-pointer overflow-hidden rounded-3xl border border-border/80 bg-card shadow-soft transition-all duration-300 hover:-translate-y-1 hover:shadow-card flex flex-col justify-between"
                   >
                     {/* Album Cover */}
-                    <div className="relative aspect-[4/3] w-full overflow-hidden bg-secondary">
+                    <div className="relative aspect-[4/3] w-full overflow-hidden bg-secondary/80">
+                      {/* Ambient blurred backdrop for portrait/irregular covers */}
+                      <img
+                        src={resolveImageUrl(album.festival?.cover, album.festivalId)}
+                        alt=""
+                        aria-hidden="true"
+                        className="absolute inset-0 h-full w-full object-cover blur-md scale-110 opacity-35 dark:opacity-25 pointer-events-none"
+                      />
+                      {/* Uncropped Full Cover */}
                       <img
                         src={resolveImageUrl(album.festival?.cover, album.festivalId)}
                         alt={album.title}
                         loading="lazy"
-                        className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        className="relative z-[1] h-full w-full object-contain transition-transform duration-500 group-hover:scale-105"
                       />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+                      <div className="absolute inset-0 z-[2] bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
 
                       {/* Year badge */}
-                      <span className="absolute right-3 top-3 rounded-full bg-background/85 px-2.5 py-1 text-xs font-semibold text-foreground backdrop-blur">
+                      <span className="absolute right-3 top-3 z-[3] rounded-full bg-background/85 px-2.5 py-1 text-xs font-semibold text-foreground backdrop-blur">
                         ឆ្នាំ {toKhmerNumber(album.year)}
                       </span>
 
                       {/* Festival Name on cover */}
-                      <div className="absolute inset-x-0 bottom-0 p-4">
+                      <div className="absolute inset-x-0 bottom-0 z-[3] p-4">
                         <h3 className="flex items-center gap-2 text-sm font-bold text-white drop-shadow">
                           <span
                             className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-xs"
@@ -465,20 +473,20 @@ function PublicImageGalleryPage() {
                 </Button>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 sm:gap-4">
+              <div className="columns-2 gap-3.5 sm:gap-4 [column-fill:_balance] sm:columns-3 md:columns-4 lg:columns-5 xl:columns-6">
                 {albumPhotos.map((photo, idx) => (
                   <div
                     key={photo.id}
                     onClick={() => setLightboxIndex(idx)}
-                    className="group relative cursor-pointer overflow-hidden rounded-2xl border border-border/80 bg-card shadow-soft transition-all duration-300 hover:shadow-card hover:-translate-y-0.5 flex flex-col justify-between"
+                    className="group relative mb-3.5 sm:mb-4 block w-full break-inside-avoid cursor-pointer overflow-hidden rounded-2xl border border-border/80 bg-card shadow-soft transition-all duration-300 hover:shadow-card hover:-translate-y-0.5"
                   >
-                    {/* Thumbnail */}
-                    <div className="aspect-square w-full overflow-hidden bg-secondary">
+                    {/* Natural Aspect Ratio Photo Thumbnail */}
+                    <div className="relative w-full overflow-hidden bg-secondary">
                       <img
                         src={resolveImageUrl(photo.thumbnailUrl || photo.src)}
                         alt={photo.caption}
                         loading="lazy"
-                        className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        className="w-full h-auto block object-contain transition-transform duration-500 group-hover:scale-105"
                         onError={(e) => {
                           (e.target as HTMLImageElement).src = resolveImageUrl(null);
                         }}

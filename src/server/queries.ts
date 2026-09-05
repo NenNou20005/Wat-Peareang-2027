@@ -1,6 +1,6 @@
 import { getDrizzleDb, isPostgresConfigured } from "../db/index.ts";
 import * as schema from "../db/schema.ts";
-import { eq, and, desc, asc, sql, ilike, or, gte, lte } from "drizzle-orm";
+import { eq, and, desc, asc, sql, ilike, or, gte, lte, inArray, ne } from "drizzle-orm";
 import { normalizeSearchQuery } from "../lib/search-normalizer.ts";
 import type { Festival, Album } from "../data/archive";
 
@@ -12,10 +12,14 @@ export interface DbFestival extends Festival {
 
 export interface DbAlbum extends Album {
   description?: string | null | undefined;
+  eventId?: string | null | undefined;
   viewsCount?: number | undefined;
   likesCount?: number | undefined;
   status?: string | undefined;
+  sortOrder?: number | undefined;
   coverImage?: string | null | undefined;
+  createdAt?: string | undefined;
+  updatedAt?: string | undefined;
 }
 
 export interface DbPhoto {
@@ -38,11 +42,33 @@ export interface DbPhoto {
   createdAt?: string | undefined;
 }
 
+export interface DbVideo {
+  id: string;
+  albumId?: string | undefined;
+  albumTitle?: string | undefined;
+  festivalName?: string | undefined;
+  year?: number | undefined;
+  title: string;
+  filename?: string | null | undefined;
+  url: string;
+  thumbnailUrl?: string | null | undefined;
+  duration?: number | null | undefined;
+  width?: number | null | undefined;
+  height?: number | null | undefined;
+  size?: number | null | undefined;
+  mimeType?: string | null | undefined;
+  viewsCount?: number | undefined;
+  likesCount?: number | undefined;
+  status?: string | undefined;
+  createdAt?: string | undefined;
+}
+
 export interface ArchiveStats {
   totalFestivals: number;
   totalYears: number;
   totalAlbums: number;
   totalImages: number;
+  totalVideos?: number;
   yearStatsMap: Record<number, { albums: number; photos: number; locations: number }>;
 }
 
@@ -144,6 +170,20 @@ export async function getPostgresAlbums(filter?: {
           AND ${schema.images.status} != 'trashed'
           AND ${schema.images.deletedAt} IS NULL
         )`,
+        actualVideoCount: sql<number>`(
+          SELECT count(*)::int FROM ${schema.videos}
+          WHERE ${schema.videos.albumId} = ${schema.albums.id}
+          AND ${schema.videos.status} != 'trashed'
+          AND ${schema.videos.deletedAt} IS NULL
+        )`,
+        firstImageUrl: sql<string | null>`(
+          SELECT COALESCE(${schema.images.thumbnailUrl}, ${schema.images.url}) FROM ${schema.images}
+          WHERE ${schema.images.albumId} = ${schema.albums.id}
+          AND ${schema.images.status} != 'trashed'
+          AND ${schema.images.deletedAt} IS NULL
+          ORDER BY ${schema.images.createdAt} ASC
+          LIMIT 1
+        )`,
       })
       .from(schema.albums)
       .innerJoin(schema.festivals, eq(schema.albums.festivalId, schema.festivals.id))
@@ -154,7 +194,7 @@ export async function getPostgresAlbums(filter?: {
       return [];
     }
 
-    let mapped: DbAlbum[] = rows.map(({ album, festival, actualPhotoCount }) => {
+    let mapped: DbAlbum[] = rows.map(({ album, festival, actualPhotoCount, actualVideoCount, firstImageUrl }) => {
       const festObj: Festival = {
         id: festival.id,
         name: festival.name,
@@ -169,6 +209,11 @@ export async function getPostgresAlbums(filter?: {
           ? Number(actualPhotoCount)
           : album.photoCount || 0;
 
+      const realVideoCount =
+        actualVideoCount !== undefined && actualVideoCount !== null
+          ? Number(actualVideoCount)
+          : 0;
+
       return {
         id: album.id,
         festivalId: album.festivalId,
@@ -176,9 +221,10 @@ export async function getPostgresAlbums(filter?: {
         year: album.year,
         location: album.location,
         photoCount: realCount,
+        videoCount: realVideoCount,
         title: album.title,
         description: album.description,
-        coverImage: album.coverImage || festObj.cover,
+        coverImage: album.coverImage || firstImageUrl || festObj.cover,
         viewsCount: album.viewsCount,
         likesCount: album.likesCount,
         status: album.status,
@@ -236,6 +282,20 @@ export async function getPostgresAlbumById(albumId: string): Promise<DbAlbum | n
           AND ${schema.images.status} != 'trashed'
           AND ${schema.images.deletedAt} IS NULL
         )`,
+        actualVideoCount: sql<number>`(
+          SELECT count(*)::int FROM ${schema.videos}
+          WHERE ${schema.videos.albumId} = ${schema.albums.id}
+          AND ${schema.videos.status} != 'trashed'
+          AND ${schema.videos.deletedAt} IS NULL
+        )`,
+        firstImageUrl: sql<string | null>`(
+          SELECT COALESCE(${schema.images.thumbnailUrl}, ${schema.images.url}) FROM ${schema.images}
+          WHERE ${schema.images.albumId} = ${schema.albums.id}
+          AND ${schema.images.status} != 'trashed'
+          AND ${schema.images.deletedAt} IS NULL
+          ORDER BY ${schema.images.createdAt} ASC
+          LIMIT 1
+        )`,
       })
       .from(schema.albums)
       .innerJoin(schema.festivals, eq(schema.albums.festivalId, schema.festivals.id))
@@ -246,7 +306,7 @@ export async function getPostgresAlbumById(albumId: string): Promise<DbAlbum | n
       return null;
     }
 
-    const { album, festival, actualPhotoCount } = rows[0]!;
+    const { album, festival, actualPhotoCount, actualVideoCount, firstImageUrl } = rows[0]!;
     const festObj: Festival = {
       id: festival.id,
       name: festival.name,
@@ -261,6 +321,11 @@ export async function getPostgresAlbumById(albumId: string): Promise<DbAlbum | n
         ? Number(actualPhotoCount)
         : album.photoCount || 0;
 
+    const realVideoCount =
+      actualVideoCount !== undefined && actualVideoCount !== null
+        ? Number(actualVideoCount)
+        : 0;
+
     return {
       id: album.id,
       festivalId: album.festivalId,
@@ -268,9 +333,10 @@ export async function getPostgresAlbumById(albumId: string): Promise<DbAlbum | n
       year: album.year,
       location: album.location,
       photoCount: realCount,
+      videoCount: realVideoCount,
       title: album.title,
       description: album.description,
-      coverImage: album.coverImage || festObj.cover,
+      coverImage: album.coverImage || firstImageUrl || festObj.cover,
       viewsCount: album.viewsCount,
       likesCount: album.likesCount,
       status: album.status,
@@ -328,6 +394,64 @@ export async function getPostgresPhotosForAlbum(albumId: string): Promise<DbPhot
     return [];
   } catch (err) {
     console.warn("[PostgreSQL Query Error] Failed to read album photos from Postgres:", err);
+    return [];
+  }
+}
+
+/**
+ * 5.1 Read all published videos for a specific album from PostgreSQL
+ */
+export async function getPostgresVideosForAlbum(albumId: string): Promise<DbVideo[]> {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) {
+    return [];
+  }
+
+  try {
+    const rows = await db
+      .select({
+        video: schema.videos,
+        album: schema.albums,
+        festival: schema.festivals,
+      })
+      .from(schema.videos)
+      .innerJoin(schema.albums, eq(schema.videos.albumId, schema.albums.id))
+      .innerJoin(schema.festivals, eq(schema.albums.festivalId, schema.festivals.id))
+      .where(
+        and(
+          eq(schema.videos.albumId, albumId),
+          or(eq(schema.videos.status, "published"), eq(schema.videos.status, "approved")),
+          sql`${schema.videos.deletedAt} IS NULL`,
+        ),
+      )
+      .orderBy(asc(schema.videos.createdAt), asc(schema.videos.id));
+
+    if (rows && rows.length > 0) {
+      return rows.map(({ video, album, festival }) => ({
+        id: video.id,
+        albumId: video.albumId,
+        albumTitle: album.title,
+        festivalName: festival.name,
+        year: album.year,
+        title: video.title,
+        filename: video.filename,
+        url: video.url,
+        thumbnailUrl: video.thumbnailUrl,
+        duration: video.duration,
+        width: video.width,
+        height: video.height,
+        size: video.size,
+        mimeType: video.mimeType,
+        viewsCount: video.viewsCount,
+        likesCount: video.likesCount,
+        status: video.status,
+        createdAt: video.createdAt ? video.createdAt.toISOString() : undefined,
+      }));
+    }
+
+    return [];
+  } catch (err) {
+    console.warn("[PostgreSQL Query Error] Failed to read album videos from Postgres:", err);
     return [];
   }
 }
@@ -422,6 +546,75 @@ export async function searchPostgresArchive(query: string): Promise<DbAlbum[]> {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   return getPostgresAlbums({ search: q });
+}
+
+/**
+ * 7.1 Search public videos in PostgreSQL
+ */
+export async function searchPostgresVideos(query: string): Promise<DbVideo[]> {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) return [];
+
+  try {
+    const rawPattern = `%${q}%`;
+    const normQ = normalizeSearchQuery(q);
+    const normPattern = `%${normQ}%`;
+
+    const rows = await db
+      .select({
+        video: schema.videos,
+        album: schema.albums,
+        festival: schema.festivals,
+      })
+      .from(schema.videos)
+      .innerJoin(schema.albums, eq(schema.videos.albumId, schema.albums.id))
+      .innerJoin(schema.festivals, eq(schema.albums.festivalId, schema.festivals.id))
+      .where(
+        and(
+          or(eq(schema.videos.status, "published"), eq(schema.videos.status, "approved")),
+          sql`${schema.videos.deletedAt} IS NULL`,
+          or(
+            ilike(schema.videos.title, rawPattern),
+            ilike(schema.videos.filename, rawPattern),
+            ilike(schema.albums.title, rawPattern),
+            ilike(schema.festivals.name, rawPattern),
+            sql`CAST(${schema.albums.year} AS TEXT) ILIKE ${rawPattern}`,
+            ilike(schema.videos.title, normPattern),
+            ilike(schema.albums.title, normPattern),
+            ilike(schema.festivals.name, normPattern),
+          ),
+        ),
+      )
+      .orderBy(desc(schema.videos.createdAt))
+      .limit(50);
+
+    return rows.map(({ video, album, festival }) => ({
+      id: video.id,
+      albumId: video.albumId,
+      albumTitle: album.title,
+      festivalName: festival.name,
+      year: album.year,
+      title: video.title,
+      filename: video.filename,
+      url: video.url,
+      thumbnailUrl: video.thumbnailUrl,
+      duration: video.duration,
+      width: video.width,
+      height: video.height,
+      size: video.size,
+      mimeType: video.mimeType,
+      viewsCount: video.viewsCount,
+      likesCount: video.likesCount,
+      status: video.status,
+      createdAt: video.createdAt ? video.createdAt.toISOString() : undefined,
+    }));
+  } catch (err) {
+    console.warn("[PostgreSQL Query Error] Failed to search videos from Postgres:", err);
+    return [];
+  }
 }
 
 // --- PHASE 2.2 ADMIN QUERIES & ANALYTICS ---
@@ -652,6 +845,14 @@ export async function getAdminAlbumsPaginated(params: {
           AND ${schema.images.status} != 'trashed'
           AND ${schema.images.deletedAt} IS NULL
         )`,
+        firstImageUrl: sql<string | null>`(
+          SELECT COALESCE(${schema.images.thumbnailUrl}, ${schema.images.url}) FROM ${schema.images}
+          WHERE ${schema.images.albumId} = ${schema.albums.id}
+          AND ${schema.images.status} != 'trashed'
+          AND ${schema.images.deletedAt} IS NULL
+          ORDER BY ${schema.images.createdAt} ASC
+          LIMIT 1
+        )`,
       })
       .from(schema.albums)
       .innerJoin(schema.festivals, eq(schema.albums.festivalId, schema.festivals.id))
@@ -660,7 +861,7 @@ export async function getAdminAlbumsPaginated(params: {
       .limit(limit)
       .offset(offset);
 
-    const mapped: DbAlbum[] = rows.map(({ album, festival, actualPhotoCount }) => {
+    const mapped: DbAlbum[] = rows.map(({ album, festival, actualPhotoCount, firstImageUrl }) => {
       const realCount =
         actualPhotoCount !== undefined && actualPhotoCount !== null
           ? Number(actualPhotoCount)
@@ -682,7 +883,7 @@ export async function getAdminAlbumsPaginated(params: {
         photoCount: realCount,
         title: album.title,
         description: album.description,
-        coverImage: album.coverImage || festival.coverUrl || `/assets/fest-${festival.id}.jpg`,
+        coverImage: album.coverImage || firstImageUrl || festival.coverUrl || `/assets/fest-${festival.id}.jpg`,
         viewsCount: album.viewsCount,
         likesCount: album.likesCount,
         status: album.status,
@@ -867,6 +1068,287 @@ export async function getAdminImagesPaginated(params: {
   }
 }
 
+export async function getDiverseArchiveImages(limit = 24) {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) return [];
+
+  try {
+    const res = await db.execute(sql`
+      WITH ranked_photos AS (
+        SELECT 
+          i.id,
+          i.album_id,
+          a.title as album_title,
+          a.year,
+          f.name as festival_name,
+          i.title,
+          i.description,
+          i.url,
+          i.thumbnail_url,
+          i.photographer,
+          i.date_taken,
+          i.copyright,
+          i.tags,
+          i.views_count,
+          i.likes_count,
+          i.downloads_count,
+          i.shares_count,
+          i.status,
+          i.uploaded_by,
+          i.created_at,
+          ROW_NUMBER() OVER(PARTITION BY i.album_id ORDER BY i.created_at DESC) as rn
+        FROM images i
+        JOIN albums a ON i.album_id = a.id
+        JOIN festivals f ON a.festival_id = f.id
+        WHERE i.status != 'trashed' AND i.deleted_at IS NULL
+      )
+      SELECT *
+      FROM ranked_photos
+      WHERE rn = 1
+      ORDER BY created_at DESC;
+    `);
+
+    const rows = (res.rows || []) as any[];
+    if (rows.length === 0) return [];
+
+    // Group by festival
+    const byFestival: Record<string, any[]> = {};
+    for (const row of rows) {
+      const fest = row.festival_name || "ផ្សេងៗ";
+      if (!byFestival[fest]) byFestival[fest] = [];
+      byFestival[fest].push(row);
+    }
+
+    // Interleave round-robin across festivals
+    const interleaved: any[] = [];
+    const festKeys = Object.keys(byFestival);
+    let idx = 0;
+    while (interleaved.length < limit) {
+      let added = false;
+      for (const key of festKeys) {
+        if (byFestival[key] && byFestival[key][idx]) {
+          interleaved.push(byFestival[key][idx]);
+          added = true;
+          if (interleaved.length >= limit) break;
+        }
+      }
+      if (!added) break;
+      idx++;
+    }
+
+    return interleaved.slice(0, limit).map((r) => ({
+      id: r.id,
+      albumId: r.album_id,
+      albumTitle: r.album_title || undefined,
+      festivalName: r.festival_name || undefined,
+      year: r.year || undefined,
+      title: r.title,
+      description: r.description,
+      url: r.url,
+      thumbnailUrl: r.thumbnail_url,
+      photographer: r.photographer,
+      dateTaken: r.date_taken ? new Date(r.date_taken).toISOString() : null,
+      copyright: r.copyright,
+      tags: r.tags,
+      viewsCount: r.views_count || 0,
+      likesCount: r.likes_count || 0,
+      downloadsCount: r.downloads_count || 0,
+      sharesCount: r.shares_count || 0,
+      status: r.status || "published",
+      uploadedBy: r.uploaded_by,
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+    }));
+  } catch (err) {
+    console.warn("[getDiverseArchiveImages Error]:", err);
+    return [];
+  }
+}
+
+export async function getAllArchiveImagesForSlideshow() {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) return [];
+
+  try {
+    const res = await db.execute(sql`
+      SELECT 
+        i.id,
+        i.album_id,
+        a.title as album_title,
+        a.year,
+        f.name as festival_name,
+        i.title,
+        i.description,
+        i.url,
+        i.thumbnail_url,
+        i.photographer,
+        i.date_taken,
+        i.copyright,
+        i.tags,
+        i.views_count,
+        i.likes_count,
+        i.downloads_count,
+        i.shares_count,
+        i.status,
+        i.uploaded_by,
+        i.created_at
+      FROM images i
+      JOIN albums a ON i.album_id = a.id
+      JOIN festivals f ON a.festival_id = f.id
+      WHERE i.status != 'trashed' AND i.deleted_at IS NULL
+      ORDER BY i.created_at DESC;
+    `);
+
+    const rows = (res.rows || []) as any[];
+    return rows.map((r) => ({
+      id: r.id,
+      albumId: r.album_id,
+      albumTitle: r.album_title || undefined,
+      festivalName: r.festival_name || undefined,
+      year: r.year || undefined,
+      title: r.title,
+      description: r.description,
+      url: r.url,
+      thumbnailUrl: r.thumbnail_url,
+      photographer: r.photographer,
+      dateTaken: r.date_taken ? new Date(r.date_taken).toISOString() : null,
+      copyright: r.copyright,
+      tags: r.tags,
+      viewsCount: r.views_count || 0,
+      likesCount: r.likes_count || 0,
+      downloadsCount: r.downloads_count || 0,
+      sharesCount: r.shares_count || 0,
+      status: r.status || "published",
+      uploadedBy: r.uploaded_by,
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+    }));
+  } catch (err) {
+    console.warn("[getAllArchiveImagesForSlideshow Error]:", err);
+    return [];
+  }
+}
+
+export interface SlideshowAlbumData {
+  id: string;
+  title: string;
+  year: number;
+  festivalId: string;
+  festivalName: string;
+  festivalEmoji: string;
+  coverImage?: string;
+  location?: string;
+  images: Array<{
+    id: string;
+    albumId: string;
+    albumTitle?: string;
+    festivalName?: string;
+    year?: number;
+    title: string;
+    description?: string | null;
+    url: string;
+    thumbnailUrl?: string | null;
+    photographer?: string | null;
+    dateTaken?: string | null;
+    copyright?: string | null;
+    tags?: string | null;
+    viewsCount?: number;
+    likesCount?: number;
+    downloadsCount?: number;
+    sharesCount?: number;
+    status: string;
+    uploadedBy?: string | null;
+    createdAt?: string;
+  }>;
+}
+
+export async function getArchiveAlbumsWithAllImages(): Promise<SlideshowAlbumData[]> {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) return [];
+
+  try {
+    const res = await db.execute(sql`
+      SELECT 
+        i.id,
+        i.album_id,
+        a.title as album_title,
+        a.year,
+        a.festival_id,
+        a.cover_image as album_cover,
+        a.location as album_location,
+        f.name as festival_name,
+        f.emoji as festival_emoji,
+        i.title,
+        i.description,
+        i.url,
+        i.thumbnail_url,
+        i.photographer,
+        i.date_taken,
+        i.copyright,
+        i.tags,
+        i.views_count,
+        i.likes_count,
+        i.downloads_count,
+        i.shares_count,
+        i.status,
+        i.uploaded_by,
+        i.created_at as image_created_at
+      FROM images i
+      JOIN albums a ON i.album_id = a.id
+      JOIN festivals f ON a.festival_id = f.id
+      WHERE i.status != 'trashed' AND i.deleted_at IS NULL
+      ORDER BY a.year DESC, f.name ASC, a.created_at DESC, i.created_at ASC;
+    `);
+
+    const rows = (res.rows || []) as any[];
+    if (rows.length === 0) return [];
+
+    const albumMap = new Map<string, SlideshowAlbumData>();
+
+    for (const row of rows) {
+      if (!albumMap.has(row.album_id)) {
+        albumMap.set(row.album_id, {
+          id: row.album_id,
+          title: row.album_title,
+          year: row.year,
+          festivalId: row.festival_id,
+          festivalName: row.festival_name,
+          festivalEmoji: row.festival_emoji || "🎉",
+          coverImage: row.album_cover || undefined,
+          location: row.album_location || undefined,
+          images: [],
+        });
+      }
+
+      albumMap.get(row.album_id)!.images.push({
+        id: row.id,
+        albumId: row.album_id,
+        albumTitle: row.album_title,
+        festivalName: row.festival_name,
+        year: row.year,
+        title: row.title,
+        description: row.description,
+        url: row.url,
+        thumbnailUrl: row.thumbnail_url,
+        photographer: row.photographer,
+        dateTaken: row.date_taken ? new Date(row.date_taken).toISOString() : null,
+        copyright: row.copyright,
+        tags: row.tags,
+        viewsCount: row.views_count || 0,
+        likesCount: row.likes_count || 0,
+        downloadsCount: row.downloads_count || 0,
+        sharesCount: row.shares_count || 0,
+        status: row.status || "published",
+        uploadedBy: row.uploaded_by,
+        createdAt: row.image_created_at ? new Date(row.image_created_at).toISOString() : new Date().toISOString(),
+      });
+    }
+
+    return Array.from(albumMap.values());
+  } catch (err) {
+    console.warn("[getArchiveAlbumsWithAllImages Error]:", err);
+    return [];
+  }
+}
+
 export async function getAdminTrashItems() {
   const db = getDrizzleDb();
   if (!db || !isPostgresConfigured()) {
@@ -880,7 +1362,7 @@ export async function getAdminTrashItems() {
   }
 
   try {
-    const [trashedFestivals, trashedAlbums, trashedImages] = await Promise.all([
+    const [trashedFestivals, trashedAlbums, trashedImages, trashedVideos] = await Promise.all([
       db
         .select()
         .from(schema.festivals)
@@ -904,6 +1386,16 @@ export async function getAdminTrashItems() {
         .leftJoin(schema.albums, eq(schema.images.albumId, schema.albums.id))
         .where(or(eq(schema.images.status, "trashed"), sql`${schema.images.deletedAt} IS NOT NULL`))
         .orderBy(desc(schema.images.updatedAt))
+        .limit(200),
+      db
+        .select({
+          video: schema.videos,
+          album: schema.albums,
+        })
+        .from(schema.videos)
+        .leftJoin(schema.albums, eq(schema.videos.albumId, schema.albums.id))
+        .where(or(eq(schema.videos.status, "trashed"), sql`${schema.videos.deletedAt} IS NOT NULL`))
+        .orderBy(desc(schema.videos.updatedAt))
         .limit(200),
     ]);
 
@@ -958,13 +1450,36 @@ export async function getAdminTrashItems() {
       };
     });
 
-    const total = mappedFestivals.length + mappedAlbums.length + mappedImages.length;
+    const mappedVideos = trashedVideos.map(({ video, album }) => {
+      const albumActive = album && album.status !== "trashed";
+      return {
+        id: video.id,
+        type: "video" as const,
+        title: video.title || video.filename || "វីដេអូ",
+        description: video.description,
+        url: video.url,
+        thumbnailUrl: video.thumbnailUrl,
+        albumId: video.albumId,
+        albumTitle: album?.title,
+        size: video.size,
+        mimeType: video.mimeType,
+        deletedAt: (video.deletedAt || video.updatedAt).toISOString(),
+        trashedAt: (video.deletedAt || video.updatedAt).toISOString(),
+        canRestore: !!albumActive,
+        blockReason: !albumActive
+          ? "ត្រូវស្តារ Album ឡើងវិញជាមុនសិន ទើបអាចស្តារវីដេអូនេះបាន។"
+          : undefined,
+      };
+    });
+
+    const total = mappedFestivals.length + mappedAlbums.length + mappedImages.length + mappedVideos.length;
 
     return {
       festivals: mappedFestivals,
       years: [],
       albums: mappedAlbums,
       images: mappedImages,
+      videos: mappedVideos,
       total,
     };
   } catch (err) {
@@ -974,6 +1489,7 @@ export async function getAdminTrashItems() {
       years: [],
       albums: [],
       images: [],
+      videos: [],
       total: 0,
     };
   }
@@ -5025,4 +5541,695 @@ export async function generatePostgresExportReport(
     mimeType: "text/csv; charset=utf-8",
     filename: cleanFilename,
   };
+}
+
+// ============================================================================
+// HIERARCHICAL ARCHIVE (FESTIVAL -> YEAR -> EVENTS -> ALBUMS -> PHOTOS)
+// ============================================================================
+
+export interface DbEvent {
+  id: string;
+  festivalId: string;
+  year: number;
+  nameKh: string;
+  nameEn?: string | null;
+  description?: string | null;
+  eventDate?: string | null;
+  location: string;
+  icon: string;
+  coverImage?: string | null;
+  status: string;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DbEventWithAlbums extends DbEvent {
+  albums: DbAlbum[];
+  photoCount: number;
+}
+
+/**
+ * Validate Hierarchy Integrity for Festival -> Year -> Event -> Album
+ * Ensures:
+ * 1. Festival exists
+ * 2. Year exists
+ * 3. Event (if specified) exists and strictly belongs to the specified (festivalId, year)
+ * 4. Cross-festival and cross-year assignments are strictly rejected
+ */
+export async function validateHierarchyIntegrity(params: {
+  festivalId: string;
+  year: number;
+  eventId?: string | null | undefined;
+}): Promise<{ valid: boolean; error?: string }> {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) {
+    return { valid: true };
+  }
+
+  try {
+    const { festivalId, year, eventId } = params;
+
+    // 1. Verify Festival exists
+    const [festival] = await db
+      .select({ id: schema.festivals.id })
+      .from(schema.festivals)
+      .where(eq(schema.festivals.id, festivalId))
+      .limit(1);
+
+    if (!festival) {
+      return {
+        valid: false,
+        error: `ពិធីបុណ្យ ID "${festivalId}" មិនមាននៅក្នុងប្រព័ន្ធឡើយ។`,
+      };
+    }
+
+    // 2. Verify Year exists
+    const [yearRow] = await db
+      .select({ year: schema.years.year })
+      .from(schema.years)
+      .where(eq(schema.years.year, year))
+      .limit(1);
+
+    if (!yearRow) {
+      return {
+        valid: false,
+        error: `ឆ្នាំ ${year} មិនមាននៅក្នុងបញ្ជីឆ្នាំនៃបណ្ណសារឡើយ។`,
+      };
+    }
+
+    // 3. If eventId is provided, verify Event exists AND strictly belongs to the same festival and year
+    if (eventId && eventId.trim() !== "") {
+      const [event] = await db
+        .select({
+          id: schema.events.id,
+          festivalId: schema.events.festivalId,
+          year: schema.events.year,
+          nameKh: schema.events.nameKh,
+        })
+        .from(schema.events)
+        .where(eq(schema.events.id, eventId.trim()))
+        .limit(1);
+
+      if (!event) {
+        return {
+          valid: false,
+          error: `ព្រឹត្តិការណ៍ ID "${eventId}" មិនមាននៅក្នុងប្រព័ន្ធឡើយ។`,
+        };
+      }
+
+      // STRICT INTEGRITY CHECK: Event MUST match both festivalId and year
+      if (event.festivalId !== festivalId || event.year !== year) {
+        return {
+          valid: false,
+          error: `Hierarchy violation: ព្រឹត្តិការណ៍ «${event.nameKh}» ជាកម្មសិទ្ធិរបស់ (${event.festivalId}, ${event.year}) មិនអាចចាត់តាំងទៅ (${festivalId}, ${year}) បានទេ។`,
+        };
+      }
+    }
+
+    return { valid: true };
+  } catch (err) {
+    console.error("[PostgreSQL Query Error] validateHierarchyIntegrity failed:", err);
+    return {
+      valid: false,
+      error: "មានបញ្ហាក្នុងការផ្ទៀងផ្ទាត់សុចរិតភាព Hierarchy ក្នុង Database។",
+    };
+  }
+}
+
+/**
+ * Fetch all events (with their nested child albums) for a festival and year
+ */
+export async function getPostgresEventsForFestivalYear(
+  festivalId: string,
+  year: number,
+): Promise<DbEventWithAlbums[]> {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) {
+    return [];
+  }
+
+  try {
+    // 1. Fetch active events sorted by sortOrder
+    const eventRows = await db
+      .select()
+      .from(schema.events)
+      .where(
+        and(
+          eq(schema.events.festivalId, festivalId),
+          eq(schema.events.year, year),
+          or(eq(schema.events.status, "published"), eq(schema.events.status, "active")),
+        ),
+      )
+      .orderBy(asc(schema.events.sortOrder), asc(schema.events.createdAt));
+
+    // 2. Fetch all published albums for this festival and year
+    const albumRows = await db
+      .select()
+      .from(schema.albums)
+      .where(
+        and(
+          eq(schema.albums.festivalId, festivalId),
+          eq(schema.albums.year, year),
+          or(eq(schema.albums.status, "published"), eq(schema.albums.status, "approved")),
+        ),
+      )
+      .orderBy(asc(schema.albums.sortOrder), asc(schema.albums.createdAt));
+
+    // 3. Fetch festival metadata for album mapping
+    const [fest] = await db
+      .select()
+      .from(schema.festivals)
+      .where(eq(schema.festivals.id, festivalId))
+      .limit(1);
+
+    const festivalMeta = fest
+      ? {
+          id: fest.id,
+          name: fest.name,
+          emoji: fest.emoji,
+          accent: fest.accent,
+          month: fest.month,
+          cover: fest.coverUrl || "",
+        }
+      : {
+          id: festivalId,
+          name: festivalId,
+          emoji: "🎉",
+          accent: "#D4AF37",
+          month: "",
+          cover: "",
+        };
+
+    const mapAlbum = (a: typeof albumRows[0]): DbAlbum => ({
+      id: a.id,
+      festivalId: a.festivalId,
+      year: a.year,
+      eventId: a.eventId,
+      title: a.title,
+      description: a.description || undefined,
+      location: a.location,
+      coverImage: a.coverImage || undefined,
+      photoCount: a.photoCount,
+      status: a.status as "published" | "draft" | "trashed",
+      viewsCount: a.viewsCount,
+      likesCount: a.likesCount,
+      createdAt: a.createdAt.toISOString(),
+      updatedAt: a.updatedAt.toISOString(),
+      festival: festivalMeta,
+    });
+
+    const mappedAlbums = albumRows.map(mapAlbum);
+
+    // Group albums by eventId
+    const albumsByEvent = new Map<string, DbAlbum[]>();
+    const unassignedAlbums: DbAlbum[] = [];
+
+    for (const alb of mappedAlbums) {
+      if (alb.eventId) {
+        const list = albumsByEvent.get(alb.eventId) || [];
+        list.push(alb);
+        albumsByEvent.set(alb.eventId, list);
+      } else {
+        unassignedAlbums.push(alb);
+      }
+    }
+
+    const result: DbEventWithAlbums[] = eventRows.map((ev) => {
+      const evAlbums = albumsByEvent.get(ev.id) || [];
+      const totalPhotos = evAlbums.reduce((sum, a) => sum + (a.photoCount || 0), 0);
+      return {
+        id: ev.id,
+        festivalId: ev.festivalId,
+        year: ev.year,
+        nameKh: ev.nameKh,
+        nameEn: ev.nameEn,
+        description: ev.description,
+        eventDate: ev.eventDate,
+        location: ev.location,
+        icon: ev.icon,
+        coverImage: ev.coverImage,
+        status: ev.status,
+        sortOrder: ev.sortOrder,
+        createdAt: ev.createdAt.toISOString(),
+        updatedAt: ev.updatedAt.toISOString(),
+        albums: evAlbums,
+        photoCount: totalPhotos,
+      };
+    });
+
+    // If there are albums without a specific eventId, include a general ceremony event container
+    if (unassignedAlbums.length > 0) {
+      result.push({
+        id: `${festivalId}-${year}-general`,
+        festivalId,
+        year,
+        nameKh: "ពិធីបុណ្យទូទៅ & កម្រងរូបភាពរួម",
+        nameEn: "General Celebrations & Albums",
+        description: `កម្រងរូបភាពទូទៅនៃ ${festivalMeta.name} ប្រចាំឆ្នាំ ${year}`,
+        eventDate: null,
+        location: "វត្តពារាំង",
+        icon: festivalMeta.emoji || "🎉",
+        coverImage: null,
+        status: "published",
+        sortOrder: 9999,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        albums: unassignedAlbums,
+        photoCount: unassignedAlbums.reduce((sum, a) => sum + (a.photoCount || 0), 0),
+      });
+    }
+
+    return result;
+  } catch (err) {
+    console.error("[PostgreSQL Query Error] getPostgresEventsForFestivalYear failed:", err);
+    return [];
+  }
+}
+
+/**
+ * Fetch a single event by ID with its child albums
+ */
+export async function getPostgresEventById(eventId: string): Promise<DbEventWithAlbums | null> {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) {
+    return null;
+  }
+
+  try {
+    const [event] = await db
+      .select()
+      .from(schema.events)
+      .where(eq(schema.events.id, eventId))
+      .limit(1);
+
+    if (!event) return null;
+
+    const albumRows = await db
+      .select()
+      .from(schema.albums)
+      .where(
+        and(
+          eq(schema.albums.eventId, eventId),
+          or(eq(schema.albums.status, "published"), eq(schema.albums.status, "approved")),
+        ),
+      )
+      .orderBy(asc(schema.albums.sortOrder), asc(schema.albums.createdAt));
+
+    const [fest] = await db
+      .select()
+      .from(schema.festivals)
+      .where(eq(schema.festivals.id, event.festivalId))
+      .limit(1);
+
+    const festivalMeta = fest
+      ? {
+          id: fest.id,
+          name: fest.name,
+          emoji: fest.emoji,
+          accent: fest.accent,
+          month: fest.month,
+          cover: fest.coverUrl || "",
+        }
+      : {
+          id: event.festivalId,
+          name: event.festivalId,
+          emoji: "🎉",
+          accent: "#D4AF37",
+          month: "",
+          cover: "",
+        };
+
+    const albums: DbAlbum[] = albumRows.map((a) => ({
+      id: a.id,
+      festivalId: a.festivalId,
+      year: a.year,
+      eventId: a.eventId,
+      title: a.title,
+      description: a.description || undefined,
+      location: a.location,
+      coverImage: a.coverImage || undefined,
+      photoCount: a.photoCount,
+      status: a.status as "published" | "draft" | "trashed",
+      viewsCount: a.viewsCount,
+      likesCount: a.likesCount,
+      createdAt: a.createdAt.toISOString(),
+      updatedAt: a.updatedAt.toISOString(),
+      festival: festivalMeta,
+    }));
+
+    return {
+      id: event.id,
+      festivalId: event.festivalId,
+      year: event.year,
+      nameKh: event.nameKh,
+      nameEn: event.nameEn,
+      description: event.description,
+      eventDate: event.eventDate,
+      location: event.location,
+      icon: event.icon,
+      coverImage: event.coverImage,
+      status: event.status,
+      sortOrder: event.sortOrder,
+      createdAt: event.createdAt.toISOString(),
+      updatedAt: event.updatedAt.toISOString(),
+      albums,
+      photoCount: albums.reduce((sum, a) => sum + (a.photoCount || 0), 0),
+    };
+  } catch (err) {
+    console.error("[PostgreSQL Query Error] getPostgresEventById failed:", err);
+    return null;
+  }
+}
+
+/**
+ * Fetch paginated & filtered events for Admin management
+ */
+export async function getPostgresAdminEvents(filters: {
+  search?: string | undefined;
+  festivalId?: string | undefined;
+  year?: number | string | undefined;
+  page?: number | undefined;
+  limit?: number | undefined;
+} = {}): Promise<{ events: (DbEvent & { albumsCount: number })[]; total: number; page: number; totalPages: number }> {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) {
+    return { events: [], total: 0, page: 1, totalPages: 1 };
+  }
+
+  const page = Math.max(1, filters.page || 1);
+  const limit = Math.max(1, Math.min(100, filters.limit || 25));
+  const offset = (page - 1) * limit;
+
+  try {
+    const conditions = [];
+
+    if (filters.festivalId && filters.festivalId !== "all") {
+      conditions.push(eq(schema.events.festivalId, filters.festivalId));
+    }
+
+    if (filters.year && filters.year !== "all") {
+      conditions.push(eq(schema.events.year, Number(filters.year)));
+    }
+
+    if (filters.search && filters.search.trim()) {
+      const q = `%${filters.search.trim()}%`;
+      conditions.push(
+        or(
+          ilike(schema.events.nameKh, q),
+          ilike(schema.events.nameEn, q),
+          ilike(schema.events.description, q),
+          ilike(schema.events.location, q),
+        ),
+      );
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    // Count
+    const countRes = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(schema.events)
+      .where(whereClause);
+    const total = countRes[0]?.count ?? 0;
+
+    // Rows
+    const rows = await db
+      .select()
+      .from(schema.events)
+      .where(whereClause)
+      .orderBy(asc(schema.events.festivalId), desc(schema.events.year), asc(schema.events.sortOrder))
+      .limit(limit)
+      .offset(offset);
+
+    // Album counts per event
+    const eventIds = rows.map((r) => r.id);
+    const albumCountMap = new Map<string, number>();
+
+    if (eventIds.length > 0) {
+      const albumCounts = await db
+        .select({
+          eventId: schema.albums.eventId,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(schema.albums)
+        .where(
+          and(
+            inArray(schema.albums.eventId, eventIds),
+            ne(schema.albums.status, "trashed"),
+          ),
+        )
+        .groupBy(schema.albums.eventId);
+
+      for (const ac of albumCounts) {
+        if (ac.eventId) {
+          albumCountMap.set(ac.eventId, ac.count);
+        }
+      }
+    }
+
+    const eventList = rows.map((r) => ({
+      id: r.id,
+      festivalId: r.festivalId,
+      year: r.year,
+      nameKh: r.nameKh,
+      nameEn: r.nameEn,
+      description: r.description,
+      eventDate: r.eventDate,
+      location: r.location,
+      icon: r.icon,
+      coverImage: r.coverImage,
+      status: r.status,
+      sortOrder: r.sortOrder,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+      albumsCount: albumCountMap.get(r.id) || 0,
+    }));
+
+    return {
+      events: eventList,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit) || 1,
+    };
+  } catch (err) {
+    console.error("[PostgreSQL Query Error] getPostgresAdminEvents failed:", err);
+    return { events: [], total: 0, page: 1, totalPages: 1 };
+  }
+}
+
+/**
+ * Admin: Create a new Event with hierarchy validation
+ */
+export async function createPostgresEvent(data: {
+  id?: string;
+  festivalId: string;
+  year: number;
+  nameKh: string;
+  nameEn?: string | undefined;
+  description?: string | undefined;
+  eventDate?: string | undefined;
+  location?: string | undefined;
+  icon?: string | undefined;
+  coverImage?: string | undefined;
+  status?: string | undefined;
+  sortOrder?: number | undefined;
+}): Promise<DbEvent> {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) {
+    throw new Error("Database connection is not configured.");
+  }
+
+  // Validate hierarchy integrity (Festival & Year must exist)
+  const validation = await validateHierarchyIntegrity({
+    festivalId: data.festivalId,
+    year: data.year,
+  });
+
+  if (!validation.valid) {
+    throw new Error(validation.error || "Hierarchy validation failed.");
+  }
+
+  const generatedId =
+    data.id ||
+    `${data.festivalId}-${data.year}-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+
+  const now = new Date();
+  const [created] = await db
+    .insert(schema.events)
+    .values({
+      id: generatedId,
+      festivalId: data.festivalId,
+      year: data.year,
+      nameKh: data.nameKh.trim(),
+      nameEn: data.nameEn?.trim() || null,
+      description: data.description?.trim() || null,
+      eventDate: data.eventDate?.trim() || null,
+      location: data.location?.trim() || "វត្តពារាំង",
+      icon: data.icon?.trim() || "🎉",
+      coverImage: data.coverImage?.trim() || null,
+      status: data.status || "published",
+      sortOrder: data.sortOrder || 0,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning();
+
+  if (!created) {
+    throw new Error("Failed to insert event record.");
+  }
+
+  return {
+    id: created.id,
+    festivalId: created.festivalId,
+    year: created.year,
+    nameKh: created.nameKh,
+    nameEn: created.nameEn,
+    description: created.description,
+    eventDate: created.eventDate,
+    location: created.location,
+    icon: created.icon,
+    coverImage: created.coverImage,
+    status: created.status,
+    sortOrder: created.sortOrder,
+    createdAt: created.createdAt.toISOString(),
+    updatedAt: created.updatedAt.toISOString(),
+  };
+}
+
+/**
+ * Admin: Update an Event with hierarchy validation
+ */
+export async function updatePostgresEvent(
+  id: string,
+  updates: {
+    festivalId?: string | undefined;
+    year?: number | undefined;
+    nameKh?: string | undefined;
+    nameEn?: string | undefined;
+    description?: string | undefined;
+    eventDate?: string | undefined;
+    location?: string | undefined;
+    icon?: string | undefined;
+    coverImage?: string | undefined;
+    status?: string | undefined;
+    sortOrder?: number | undefined;
+  },
+): Promise<DbEvent> {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) {
+    throw new Error("Database connection is not configured.");
+  }
+
+  const [existing] = await db
+    .select()
+    .from(schema.events)
+    .where(eq(schema.events.id, id))
+    .limit(1);
+
+  if (!existing) {
+    throw new Error("Event not found.");
+  }
+
+  const targetFestivalId = updates.festivalId || existing.festivalId;
+  const targetYear = updates.year || existing.year;
+
+  // Validate hierarchy integrity if festival or year changed
+  if (updates.festivalId || updates.year) {
+    const validation = await validateHierarchyIntegrity({
+      festivalId: targetFestivalId,
+      year: targetYear,
+    });
+    if (!validation.valid) {
+      throw new Error(validation.error || "Hierarchy validation failed.");
+    }
+  }
+
+  const [updated] = await db
+    .update(schema.events)
+    .set({
+      festivalId: targetFestivalId,
+      year: targetYear,
+      nameKh: updates.nameKh !== undefined ? updates.nameKh.trim() : existing.nameKh,
+      nameEn: updates.nameEn !== undefined ? updates.nameEn.trim() || null : existing.nameEn,
+      description:
+        updates.description !== undefined
+          ? updates.description.trim() || null
+          : existing.description,
+      eventDate:
+        updates.eventDate !== undefined ? updates.eventDate.trim() || null : existing.eventDate,
+      location:
+        updates.location !== undefined ? updates.location.trim() || "វត្តពារាំង" : existing.location,
+      icon: updates.icon !== undefined ? updates.icon.trim() || "🎉" : existing.icon,
+      coverImage:
+        updates.coverImage !== undefined ? updates.coverImage.trim() || null : existing.coverImage,
+      status: updates.status || existing.status,
+      sortOrder: updates.sortOrder !== undefined ? updates.sortOrder : existing.sortOrder,
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.events.id, id))
+    .returning();
+
+  if (!updated) {
+    throw new Error("Failed to update event record.");
+  }
+
+  return {
+    id: updated.id,
+    festivalId: updated.festivalId,
+    year: updated.year,
+    nameKh: updated.nameKh,
+    nameEn: updated.nameEn,
+    description: updated.description,
+    eventDate: updated.eventDate,
+    location: updated.location,
+    icon: updated.icon,
+    coverImage: updated.coverImage,
+    status: updated.status,
+    sortOrder: updated.sortOrder,
+    createdAt: updated.createdAt.toISOString(),
+    updatedAt: updated.updatedAt.toISOString(),
+  };
+}
+
+/**
+ * Admin: Safe delete event (albums.event_id will be nullified, albums and photos are preserved)
+ */
+export async function deletePostgresEvent(id: string): Promise<boolean> {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) {
+    throw new Error("Database connection is not configured.");
+  }
+
+  // Explicitly nullify event_id on child albums before deletion to guarantee zero album loss
+  await db
+    .update(schema.albums)
+    .set({ eventId: null, updatedAt: new Date() })
+    .where(eq(schema.albums.eventId, id));
+
+  // Delete event row
+  await db.delete(schema.events).where(eq(schema.events.id, id));
+  return true;
+}
+
+/**
+ * Admin: Reorder events
+ */
+export async function reorderPostgresEvents(eventIds: string[]): Promise<boolean> {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) {
+    throw new Error("Database connection is not configured.");
+  }
+
+  for (let i = 0; i < eventIds.length; i++) {
+    const eventId = eventIds[i];
+    if (eventId) {
+      await db
+        .update(schema.events)
+        .set({ sortOrder: i + 1, updatedAt: new Date() })
+        .where(eq(schema.events.id, eventId));
+    }
+  }
+
+  return true;
 }
