@@ -258,17 +258,23 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
         "id" text PRIMARY KEY NOT NULL,
         "festival_id" text NOT NULL,
         "year" integer NOT NULL,
+        "event_id" text,
         "title" text NOT NULL,
         "description" text,
         "location" text DEFAULT 'វត្តពារាំង' NOT NULL,
         "cover_image" text,
         "photo_count" integer DEFAULT 0 NOT NULL,
         "status" text DEFAULT 'published' NOT NULL,
+        "sort_order" integer DEFAULT 0 NOT NULL,
         "views_count" integer DEFAULT 0 NOT NULL,
         "likes_count" integer DEFAULT 0 NOT NULL,
         "created_at" timestamp with time zone DEFAULT now() NOT NULL,
         "updated_at" timestamp with time zone DEFAULT now() NOT NULL
       );`,
+
+      // Additive columns for albums
+      `ALTER TABLE "albums" ADD COLUMN IF NOT EXISTS "event_id" text;`,
+      `ALTER TABLE "albums" ADD COLUMN IF NOT EXISTS "sort_order" integer DEFAULT 0 NOT NULL;`,
 
       // images
       `CREATE TABLE IF NOT EXISTS "images" (
@@ -560,6 +566,14 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
       END $$;`,
 
       `DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'events') THEN
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'albums_event_id_events_id_fk') THEN
+            ALTER TABLE "albums" ADD CONSTRAINT "albums_event_id_events_id_fk" FOREIGN KEY ("event_id") REFERENCES "events"("id") ON DELETE set null;
+          END IF;
+        END IF;
+      END $$;`,
+
+      `DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'images_album_id_albums_id_fk') THEN
           ALTER TABLE "images" ADD CONSTRAINT "images_album_id_albums_id_fk" FOREIGN KEY ("album_id") REFERENCES "albums"("id") ON DELETE cascade;
         END IF;
@@ -617,7 +631,9 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
       `CREATE INDEX IF NOT EXISTS "idx_festivals_status" ON "festivals" ("status");`,
       `CREATE INDEX IF NOT EXISTS "idx_albums_festival_id" ON "albums" ("festival_id");`,
       `CREATE INDEX IF NOT EXISTS "idx_albums_year" ON "albums" ("year");`,
+      `CREATE INDEX IF NOT EXISTS "idx_albums_event_id" ON "albums" ("event_id");`,
       `CREATE INDEX IF NOT EXISTS "idx_albums_status" ON "albums" ("status");`,
+      `CREATE INDEX IF NOT EXISTS "idx_albums_sort_order" ON "albums" ("sort_order");`,
       `CREATE INDEX IF NOT EXISTS "idx_images_album_id" ON "images" ("album_id");`,
       `CREATE INDEX IF NOT EXISTS "idx_images_status" ON "images" ("status");`,
       `CREATE INDEX IF NOT EXISTS "idx_images_created_at" ON "images" ("created_at");`,
