@@ -42,6 +42,7 @@ public/uploads/*
 
 # Local data
 .data/
+scratch/
 .env
 .env.*
 !.env.example
