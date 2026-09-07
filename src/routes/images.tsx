@@ -24,7 +24,7 @@ import {
   useAlbumPhotos,
 } from "@/hooks/useArchiveData";
 import { toKhmerNumber } from "@/data/archive";
-import { resolveImageUrl } from "@/lib/asset-resolver";
+import { resolveImageUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
 
 type ImageGallerySearch = {
   festivalId?: string | undefined;
@@ -345,17 +345,29 @@ function PublicImageGalleryPage() {
                     <div className="relative aspect-[4/3] w-full overflow-hidden bg-secondary/80">
                       {/* Ambient blurred backdrop for portrait/irregular covers */}
                       <img
-                        src={resolveImageUrl(album.festival?.cover, album.festivalId)}
+                        src={resolveImageUrl(album.coverImage || album.festival?.cover, album.festivalId)}
                         alt=""
                         aria-hidden="true"
                         className="absolute inset-0 h-full w-full object-cover blur-md scale-110 opacity-35 dark:opacity-25 pointer-events-none"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          if (target.src !== BROKEN_IMAGE_FALLBACK) {
+                            target.src = BROKEN_IMAGE_FALLBACK;
+                          }
+                        }}
                       />
                       {/* Uncropped Full Cover */}
                       <img
-                        src={resolveImageUrl(album.festival?.cover, album.festivalId)}
+                        src={resolveImageUrl(album.coverImage || album.festival?.cover, album.festivalId)}
                         alt={album.title}
                         loading="lazy"
                         className="relative z-[1] h-full w-full object-contain transition-transform duration-500 group-hover:scale-105"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          if (target.src !== BROKEN_IMAGE_FALLBACK) {
+                            target.src = BROKEN_IMAGE_FALLBACK;
+                          }
+                        }}
                       />
                       <div className="absolute inset-0 z-[2] bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
 
@@ -489,6 +501,10 @@ function PublicImageGalleryPage() {
                         className="w-full h-auto block object-contain transition-transform duration-500 group-hover:scale-105"
                         onError={(e) => {
                           (e.target as HTMLImageElement).src = resolveImageUrl(null);
+                          const target = e.currentTarget;
+                          if (target.src !== BROKEN_IMAGE_FALLBACK) {
+                            target.src = BROKEN_IMAGE_FALLBACK;
+                          }
                         }}
                       />
                     </div>

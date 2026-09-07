@@ -36,7 +36,7 @@ import {
   useCreateAlbum,
   type AdminImage,
 } from "@/hooks/useAdminData";
-import { resolveImageUrl } from "@/lib/asset-resolver";
+import { resolveImageUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
 import { toKhmerNumber } from "@/data/archive";
 
 type ImageSearch = {
@@ -326,6 +326,8 @@ function AdminImagesPage() {
       }
 
       let successCount = 0;
+      let failedCount = 0;
+      let r2ConfirmedCount = 0;
       const parsedTags = uploadTags
         ? uploadTags
             .split(",")
@@ -351,9 +353,22 @@ function AdminImagesPage() {
             formData.append("tags", parsedTags.join(", "));
           }
 
-          await uploadImageMutation.mutateAsync(formData);
+          const res = (await uploadImageMutation.mutateAsync(formData)) as {
+            success?: boolean;
+            storageProvider?: string;
+            url?: string;
+            data?: { storageProvider?: string };
+          };
           successCount++;
+          const isR2 =
+            res?.storageProvider === "r2" ||
+            res?.data?.storageProvider === "r2" ||
+            (typeof res?.url === "string" && !res.url.startsWith("/uploads/"));
+          if (isR2) {
+            r2ConfirmedCount++;
+          }
         } catch (err: unknown) {
+          failedCount++;
           console.error("Upload error:", err);
           const msg = err instanceof Error ? err.message : "បរាជ័យ";
           toast.error(`មិនអាច Upload «${item.file.name}»: ${msg}`);
@@ -363,7 +378,14 @@ function AdminImagesPage() {
       fileList.forEach((item) => URL.revokeObjectURL(item.previewUrl));
 
       if (successCount > 0) {
-        toast.success(`បានបង្ហោះរូបភាព ${successCount} សន្លឹកដោយជោគជ័យ!`);
+        const storageNote =
+          r2ConfirmedCount === successCount
+            ? " (Cloudflare R2)"
+            : r2ConfirmedCount > 0
+              ? ` (${toKhmerNumber(r2ConfirmedCount)} ក្នុង Cloudflare R2)`
+              : "";
+        const failNote = failedCount > 0 ? ` [បរាជ័យ ${failedCount}]` : "";
+        toast.success(`បានបង្ហោះរូបភាព ${successCount} សន្លឹកដោយជោគជ័យ!${storageNote}${failNote}`);
         setIsUploadOpen(false);
         setFileList([]);
         setUploadTitle("");
@@ -668,7 +690,10 @@ function AdminImagesPage() {
                     className="w-full h-auto block object-contain transition-transform duration-300 group-hover:scale-105"
                     loading="lazy"
                     onError={(e) => {
-                      (e.target as HTMLImageElement).src = resolveImageUrl(null);
+                      const target = e.currentTarget;
+                      if (target.src !== BROKEN_IMAGE_FALLBACK) {
+                        target.src = BROKEN_IMAGE_FALLBACK;
+                      }
                     }}
                   />
                   <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
@@ -804,7 +829,10 @@ function AdminImagesPage() {
                         <Label className="text-[11px] text-muted-foreground">ឆ្នាំ</Label>
                         <select
                           value={uploadYear}
-                          onChange={(e) => setUploadYear(Number(e.target.value))}
+                          onChange={(e) => {
+                            setUploadYear(Number(e.target.value));
+                            setUploadAlbumId("");
+                          }}
                           className="mt-1 w-full rounded-xl border border-border bg-card px-2.5 h-9 text-xs"
                         >
                           {years.map((y) => (
@@ -819,7 +847,10 @@ function AdminImagesPage() {
                         <Label className="text-[11px] text-muted-foreground">ពិធីបុណ្យ</Label>
                         <select
                           value={uploadFestivalId}
-                          onChange={(e) => setUploadFestivalId(e.target.value)}
+                          onChange={(e) => {
+                            setUploadFestivalId(e.target.value);
+                            setUploadAlbumId("");
+                          }}
                           className="mt-1 w-full rounded-xl border border-border bg-card px-2.5 h-9 text-xs"
                         >
                           {festivals.map((f) => (

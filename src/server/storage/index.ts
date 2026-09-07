@@ -59,11 +59,25 @@ export function getStorageProvider(): StorageProvider {
       );
       currentStorageProvider = new R2StorageProvider();
     } else {
-      console.log("[Wat Peareang Archive]: Selected Storage Provider -> Local Disk.");
+      const isProduction =
+        process.env["NODE_ENV"] === "production" || Boolean(process.env["RENDER"]);
+      if (isProduction) {
+        throw new Error(
+          "[Wat Peareang Archive]: Cloudflare R2 storage is required in production but is not properly configured. Refusing to use ephemeral local disk storage to prevent data loss. Please ensure R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, and R2_ENDPOINT (or R2_ACCOUNT_ID) are set in environment variables.",
+        );
+      }
+      console.log(
+        "[Wat Peareang Archive]: Selected Storage Provider -> Local Disk (development fallback).",
+      );
       currentStorageProvider = new LocalStorageProvider();
     }
   }
   return currentStorageProvider;
 }
 
+export function resetStorageProviderForTesting(): void {
+  currentStorageProvider = null;
+}
+
 export { LocalStorageProvider, R2StorageProvider };
+

@@ -11,7 +11,7 @@ import { trackAlbumView } from "@/lib/analytics";
 import { LikeButton } from "@/components/site/LikeButton";
 import { FavoriteButton } from "@/components/site/FavoriteButton";
 import { getPostgresAlbumById } from "@/server/queries";
-import { resolveImageUrl } from "@/lib/asset-resolver";
+import { resolveImageUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
 
 const getAlbumServerFn = createServerFn({ method: "GET" })
   .validator((albumId: string) => albumId)
@@ -86,17 +86,29 @@ function AlbumDetail() {
       <section className="relative h-[340px] w-full overflow-hidden bg-secondary md:h-[420px]">
         {/* Ambient backdrop for portrait/irregular covers */}
         <img
-          src={album.festival.cover}
+          src={resolveImageUrl(album.coverImage || album.festival.cover, album.festivalId)}
           alt=""
           aria-hidden="true"
           className="absolute inset-0 h-full w-full object-cover blur-lg scale-110 opacity-30 dark:opacity-20 pointer-events-none"
+          onError={(e) => {
+            const target = e.currentTarget;
+            if (target.src !== BROKEN_IMAGE_FALLBACK) {
+              target.src = BROKEN_IMAGE_FALLBACK;
+            }
+          }}
         />
         <img
-          src={album.festival.cover}
+          src={resolveImageUrl(album.coverImage || album.festival.cover, album.festivalId)}
           alt={album.festival.name}
           width={1024}
           height={768}
           className="relative z-[1] h-full w-full object-cover object-center"
+          onError={(e) => {
+            const target = e.currentTarget;
+            if (target.src !== BROKEN_IMAGE_FALLBACK) {
+              target.src = BROKEN_IMAGE_FALLBACK;
+            }
+          }}
         />
         <div className="absolute inset-0 z-[2] hero-scrim" />
         <div className="absolute inset-0 z-[3]">
@@ -149,7 +161,7 @@ function AlbumDetail() {
               <button
                 type="button"
                 onClick={async () => {
-                  const targetSrc = album.festival?.cover || photos[0]?.src;
+                  const targetSrc = resolveImageUrl(album.coverImage || album.festival?.cover || photos[0]?.src, album.festivalId);
                   if (!targetSrc) return;
                   toast("កំពុងទាញយករូបភាព...");
                   const filename = `${album.id || "album"}-cover.jpg`;
@@ -220,6 +232,12 @@ function AlbumDetail() {
                         alt={p.caption}
                         loading="lazy"
                         className="w-full h-auto block object-contain transition-transform duration-500 group-hover:scale-105"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          if (target.src !== BROKEN_IMAGE_FALLBACK) {
+                            target.src = BROKEN_IMAGE_FALLBACK;
+                          }
+                        }}
                       />
                     </button>
 

@@ -2,11 +2,11 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { db, verifyPassword, hashPassword } from "./db";
-import { checkDbHealth, getDrizzleDb } from "../db/index";
+import { checkDbHealth, getDrizzleDb, isPostgresConfigured } from "../db/index";
 import * as schema from "../db/schema";
 import { eq, asc, desc, sql, and } from "drizzle-orm";
 import { getOrGenerateRequestId, logger } from "./logger";
-import { getStorageProvider } from "./storage/index";
+import { getStorageProvider, R2StorageProvider } from "./storage/index";
 import { detectImageMagicBytes, detectVideoMagicBytes, LIMITS, sanitizeText } from "./validation";
 import {
   getPostgresFestivals,
@@ -1451,16 +1451,52 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
         }
 
         // Validate target album exists in PostgreSQL
+        // Validate target album exists and verify relationship chain (Image -> Album -> Festival + Year)
         const drizzle = getDrizzleDb();
+        if (isPostgresConfigured() && !drizzle) {
+          return json(
+            { success: false, error: "មិនអាចភ្ជាប់ទៅកាន់ប្រព័ន្ធទិន្នន័យ PostgreSQL បានទេ។" },
+            500,
+          );
+        }
+
+        let targetAlbum: {
+          id: string;
+          festivalId: string;
+          year: number;
+          coverImage: string | null;
+          photoCount: number;
+        } | null = null;
+
         if (drizzle) {
           const [foundAlbum] = await drizzle
-            .select({ id: schema.albums.id })
+            .select({
+              id: schema.albums.id,
+              festivalId: schema.albums.festivalId,
+              year: schema.albums.year,
+              coverImage: schema.albums.coverImage,
+              photoCount: schema.albums.photoCount,
+            })
             .from(schema.albums)
             .where(eq(schema.albums.id, albumId))
             .limit(1);
+
           if (!foundAlbum) {
             return json({ success: false, error: "រកមិនឃើញ Album គោលដៅក្នុងទិន្នន័យឡើយ។" }, 404);
           }
+          targetAlbum = foundAlbum;
+        } else {
+          const memAlbum = db.getAlbum(albumId);
+          if (!memAlbum) {
+            return json({ success: false, error: "រកមិនឃើញ Album គោលដៅក្នុងទិន្នន័យឡើយ។" }, 404);
+          }
+          targetAlbum = {
+            id: memAlbum.id,
+            festivalId: memAlbum.festivalId,
+            year: memAlbum.year,
+            coverImage: memAlbum.coverImage || null,
+            photoCount: memAlbum.photoCount || 0,
+          };
         }
 
         const storage = getStorageProvider();
@@ -1489,32 +1525,57 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
         try {
           if (drizzle) {
-            await drizzle.insert(schema.images).values({
-              id: newImage.id,
-              albumId: newImage.albumId,
-              title: newImage.title,
-              description: newImage.description || null,
-              url: newImage.url,
-              thumbnailUrl: newImage.thumbnailUrl,
-              size: newImage.size,
-              mimeType: newImage.mimeType,
-              photographer: newImage.photographer,
-              tags: newImage.tags || null,
-              status: newImage.status,
-              uploadedBy: currentUser.id,
-            });
+            await drizzle.transaction(async (tx) => {
+              // Deduplication: prevent duplicate image row for same album and URL
+              const [existingRow] = await tx
+                .select({ id: schema.images.id })
+                .from(schema.images)
+                .where(
+                  and(
+                    eq(schema.images.albumId, newImage.albumId),
+                    eq(schema.images.url, newImage.url),
+                    sql`${schema.images.deletedAt} IS NULL`,
+                  ),
+                )
+                .limit(1);
 
-            // Increment album photoCount in PostgreSQL
-            await drizzle
-              .update(schema.albums)
-              .set({
-                photoCount: sql`${schema.albums.photoCount} + 1`,
-                updatedAt: new Date(),
-              })
-              .where(eq(schema.albums.id, newImage.albumId))
-              .catch(() => {});
+              if (!existingRow) {
+                // Await image row insertion with all fields
+                await tx.insert(schema.images).values({
+                  id: newImage.id,
+                  albumId: newImage.albumId,
+                  title: newImage.title,
+                  description: newImage.description || null,
+                  url: newImage.url,
+                  thumbnailUrl: newImage.thumbnailUrl,
+                  size: newImage.size,
+                  mimeType: newImage.mimeType,
+                  photographer: newImage.photographer,
+                  tags: newImage.tags || null,
+                  status: newImage.status,
+                  uploadedBy: currentUser.id,
+                });
+
+                // Increment album photoCount in PostgreSQL and assign coverImage if album has none
+                const albumUpdates: Record<string, any> = {
+                  photoCount: sql`COALESCE(${schema.albums.photoCount}, 0) + 1`,
+                  updatedAt: new Date(),
+                };
+                if (targetAlbum && !targetAlbum.coverImage) {
+                  albumUpdates["coverImage"] = newImage.url;
+                  targetAlbum.coverImage = newImage.url;
+                }
+
+                await tx
+                  .update(schema.albums)
+                  .set(albumUpdates)
+                  .where(eq(schema.albums.id, newImage.albumId));
+              }
+            });
           }
-          db.addImage(newImage, currentUser);
+
+          // Sync in-memory state and log activity
+          await db.addImage(newImage, currentUser, { skipDrizzle: true });
 
           logger.info("Image uploaded and persisted successfully", {
             imageId: newImage.id,
@@ -1528,13 +1589,14 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
             {
               success: true,
               data: newImage,
+              storageProvider: storage instanceof R2StorageProvider ? "r2" : "local",
               url: stored.url,
               message: "បានបង្ហោះរូបភាពដោយជោគជ័យ!",
             },
             201,
           );
         } catch (dbErr) {
-          // Cleanup newly stored file if DB insertion failed
+          // Failure handling: Cleanup newly stored file in R2 if DB insertion failed
           await storage.deleteImage(stored.url).catch(() => {});
           logger.error("Failed to insert image record to database", {
             error: dbErr,
@@ -1548,7 +1610,8 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
         }
       } catch (err) {
         logger.error("Unexpected error during image upload", { error: err });
-        return json({ success: false, error: "មានបញ្ហាក្នុងដំណើរការ Upload រូបភាព។" }, 500);
+        const errMsg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងដំណើរការ Upload រូបភាព។";
+        return json({ success: false, error: errMsg }, 500);
       }
     }
 
@@ -1561,6 +1624,14 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       try {
         const body = await request.json();
         const allowedMimes = ["image/jpeg", "image/png", "image/webp", "image/avif", "image/gif"];
+
+        const drizzle = getDrizzleDb();
+        if (isPostgresConfigured() && !drizzle) {
+          return json(
+            { success: false, error: "មិនអាចភ្ជាប់ទៅកាន់ប្រព័ន្ធទិន្នន័យ PostgreSQL បានទេ។" },
+            500,
+          );
+        }
 
         // Handle single or bulk upload
         const uploads = Array.isArray(body.images) ? body.images : [body];
@@ -1594,6 +1665,23 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
             continue;
           }
 
+          // Validate target album exists
+          if (drizzle) {
+            const [albumRow] = await drizzle
+              .select({ id: schema.albums.id })
+              .from(schema.albums)
+              .where(eq(schema.albums.id, albumId))
+              .limit(1);
+            if (!albumRow) {
+              continue;
+            }
+          } else {
+            const memAlbum = db.getAlbum(albumId);
+            if (!memAlbum) {
+              continue;
+            }
+          }
+
           const newImage = {
             id: `img-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
             albumId,
@@ -1609,7 +1697,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
             createdAt: new Date().toISOString(),
           };
 
-          db.addImage(newImage, currentUser);
+          await db.addImage(newImage, currentUser);
           createdImages.push(newImage);
         }
 
@@ -1617,15 +1705,16 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
           return json(
             {
               success: false,
-              error: "មិនមានរូបភាពត្រឹមត្រូវត្រូវបានជ្រើសរើសឡើយ (មិនអនុញ្ញាត blob URLs)។",
+              error: "មិនមានរូបភាពត្រឹមត្រូវត្រូវបានជ្រើសរើសឡើយ (មិនអនុញ្ញាត blob URLs ឬ Album មិនត្រឹមត្រូវ)។",
             },
             400,
           );
         }
 
         return json({ success: true, data: createdImages, count: createdImages.length }, 201);
-      } catch {
-        return json({ success: false, error: "ទិន្នន័យមិនត្រឹមត្រូវ។" }, 400);
+      } catch (err) {
+        logger.error("Error creating image records via POST /api/admin/images", { error: err });
+        return json({ success: false, error: "មានបញ្ហាក្នុងការរក្សាទុកទិន្នន័យរូបភាព។" }, 500);
       }
     }
 
@@ -1647,7 +1736,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
         }
 
         if (action === "trash") {
-          const res = db.batchTrashImages(ids, currentUser);
+          const res = await db.batchTrashImages(ids, currentUser);
           return json({
             success: true,
             affected: res.affected,
@@ -1656,7 +1745,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
         }
 
         if (action === "restore") {
-          const res = db.batchRestoreImages(ids, currentUser);
+          const res = await db.batchRestoreImages(ids, currentUser);
           return json({
             success: true,
             affected: res.affected,
@@ -1668,7 +1757,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
           if (!targetAlbumId) {
             return json({ success: false, error: "សូមជ្រើសរើស Album គោលដៅ។" }, 400);
           }
-          const res = db.batchMoveImages(ids, targetAlbumId, currentUser);
+          const res = await db.batchMoveImages(ids, targetAlbumId, currentUser);
           return json({
             success: true,
             affected: res.affected,
@@ -1678,7 +1767,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
         if (action === "update_tags") {
           const tags = typeof body.tags === "string" ? body.tags.trim() : "";
-          const res = db.batchUpdateImageTags(ids, tags, currentUser);
+          const res = await db.batchUpdateImageTags(ids, tags, currentUser);
           return json({
             success: true,
             affected: res.affected,
@@ -1722,7 +1811,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       const currentUser = auth.user;
 
       const targetId = pathname.replace("/api/admin/images/", "").replace("/trash", "").trim();
-      const result = db.trashImage(targetId, currentUser);
+      const result = await db.trashImage(targetId, currentUser);
       if (!result.success) return json({ success: false, error: result.error }, 400);
       return json({ success: true, message: "បានផ្លាស់ទីរូបភាពទៅកាន់ធុងសំរាមរួចរាល់។" });
     }
@@ -1738,7 +1827,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       const currentUser = auth.user;
 
       const targetId = pathname.replace("/api/admin/images/", "").replace("/restore", "").trim();
-      const result = db.restoreImage(targetId, currentUser);
+      const result = await db.restoreImage(targetId, currentUser);
       if (!result.success) return json({ success: false, error: result.error }, 400);
       return json({ success: true, message: "បានស្តាររូបភាពឡើងវិញដោយជោគជ័យ។" });
     }
@@ -1768,7 +1857,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       const targetId = pathname.replace("/api/admin/images/", "").trim();
       try {
         const body = await request.json();
-        const result = db.updateImage(targetId, body, currentUser);
+        const result = await db.updateImage(targetId, body, currentUser);
         if (!result.success) return json({ success: false, error: result.error }, 400);
         return json({ success: true });
       } catch {
@@ -1783,7 +1872,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       const currentUser = auth.user;
 
       const targetId = pathname.replace("/api/admin/images/", "").trim();
-      const result = db.trashImage(targetId, currentUser);
+      const result = await db.trashImage(targetId, currentUser);
       if (!result.success) return json({ success: false, error: result.error }, 400);
       return json({ success: true, message: "បានផ្លាស់ទីរូបភាពទៅកាន់ធុងសំរាមរួចរាល់។" });
     }
@@ -3118,26 +3207,27 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
       try {
         if (drizzle) {
-          await drizzle.insert(schema.privateImages).values({
-            id: newImageId,
-            privateAlbumId,
-            r2Key: uniqueKey,
-            filename: file.name,
-            mimeType: detectedMime,
-            size: buffer.length,
-            title: itemTitle,
-            createdBy: currentUser.id,
-          });
+          await drizzle.transaction(async (tx) => {
+            await tx.insert(schema.privateImages).values({
+              id: newImageId,
+              privateAlbumId,
+              r2Key: uniqueKey,
+              filename: file.name,
+              mimeType: detectedMime,
+              size: buffer.length,
+              title: itemTitle,
+              createdBy: currentUser.id,
+            });
 
-          await drizzle
-            .update(schema.privateAlbums)
-            .set({
-              photoCount: sql`${schema.privateAlbums.photoCount} + 1`,
-              coverKey: uniqueKey,
-              updatedAt: new Date(),
-            })
-            .where(eq(schema.privateAlbums.id, privateAlbumId))
-            .catch(() => {});
+            await tx
+              .update(schema.privateAlbums)
+              .set({
+                photoCount: sql`COALESCE(${schema.privateAlbums.photoCount}, 0) + 1`,
+                coverKey: uniqueKey,
+                updatedAt: new Date(),
+              })
+              .where(eq(schema.privateAlbums.id, privateAlbumId));
+          });
         }
 
         db.logActivity({

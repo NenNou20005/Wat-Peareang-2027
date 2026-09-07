@@ -1528,6 +1528,10 @@ class Database {
     return this.data.albums;
   }
 
+  public getAlbum(id: string): StoredAlbum | undefined {
+    return this.data.albums.find((a) => a.id === id);
+  }
+
   public addAlbum(album: StoredAlbum, user: User): { success: boolean; error?: string } {
     if (this.data.albums.some((a) => a.id === album.id)) {
       return { success: false, error: "Album នេះមានរួចហើយ។" };
@@ -1885,8 +1889,27 @@ class Database {
     return this.data.images.filter((img) => img.status !== "trashed");
   }
 
-  public addImage(img: StoredImage, user: User) {
-    this.data.images.unshift(img);
+  public async addImage(
+    img: StoredImage,
+    user: User,
+    options?: { skipDrizzle?: boolean },
+  ): Promise<void> {
+    const existingIndex = this.data.images.findIndex(
+      (i) => i.id === img.id || (i.albumId === img.albumId && i.url === img.url),
+    );
+    if (existingIndex >= 0) {
+      this.data.images[existingIndex] = { ...this.data.images[existingIndex], ...img };
+    } else {
+      this.data.images.unshift(img);
+      const memAlbum = this.data.albums.find((a) => a.id === img.albumId);
+      if (memAlbum) {
+        memAlbum.photoCount = (memAlbum.photoCount || 0) + 1;
+        if (!memAlbum.coverImage) {
+          memAlbum.coverImage = img.url;
+        }
+      }
+    }
+
     this.logActivity({
       userId: user.id,
       userName: user.name,
@@ -1898,32 +1921,75 @@ class Database {
     });
     this.save();
 
-    const drizzle = getDrizzleDb();
-    if (drizzle) {
-      drizzle
-        .insert(schema.images)
-        .values({
-          id: img.id,
-          albumId: img.albumId,
-          title: img.title,
-          description: img.description || null,
-          url: img.url,
-          thumbnailUrl: img.thumbnailUrl || null,
-          size: img.size || 0,
-          mimeType: img.mimeType || "image/jpeg",
-          uploadedBy: img.uploadedBy || null,
-          status: "published",
-        })
-        .onConflictDoNothing()
-        .catch(() => {});
+    if (options?.skipDrizzle) {
+      return;
+    }
+
+    if (isPostgresConfigured()) {
+      const drizzle = getDrizzleDb();
+      if (!drizzle) {
+        throw new Error("[Wat Peareang Archive]: PostgreSQL is configured but client instance is null.");
+      }
+
+      await drizzle.transaction(async (tx) => {
+        const [existingRow] = await tx
+          .select({ id: schema.images.id })
+          .from(schema.images)
+          .where(
+            and(
+              eq(schema.images.albumId, img.albumId),
+              eq(schema.images.url, img.url),
+              sql`${schema.images.deletedAt} IS NULL`,
+            ),
+          )
+          .limit(1);
+
+        if (!existingRow) {
+          await tx.insert(schema.images).values({
+            id: img.id,
+            albumId: img.albumId,
+            title: img.title,
+            description: img.description || null,
+            url: img.url,
+            thumbnailUrl: img.thumbnailUrl || img.url,
+            size: img.size || 0,
+            mimeType: img.mimeType || "image/jpeg",
+            photographer: img.photographer || null,
+            tags: img.tags || null,
+            uploadedBy: img.uploadedBy || null,
+            status: img.status || "published",
+            createdAt: img.createdAt ? new Date(img.createdAt) : new Date(),
+          });
+
+          const [albumRow] = await tx
+            .select({ id: schema.albums.id, coverImage: schema.albums.coverImage })
+            .from(schema.albums)
+            .where(eq(schema.albums.id, img.albumId))
+            .limit(1);
+
+          if (albumRow) {
+            const albumUpdates: Record<string, any> = {
+              photoCount: sql`COALESCE(${schema.albums.photoCount}, 0) + 1`,
+              updatedAt: new Date(),
+            };
+            if (!albumRow.coverImage) {
+              albumUpdates["coverImage"] = img.url;
+            }
+            await tx
+              .update(schema.albums)
+              .set(albumUpdates)
+              .where(eq(schema.albums.id, img.albumId));
+          }
+        }
+      });
     }
   }
 
-  public updateImage(
+  public async updateImage(
     id: string,
     updates: Partial<StoredImage>,
     user: User,
-  ): { success: boolean; error?: string } {
+  ): Promise<{ success: boolean; error?: string }> {
     const img = this.data.images.find((i) => i.id === id);
     if (!img) return { success: false, error: "រកមិនឃើញរូបភាពនេះទេ។" };
 
@@ -1941,7 +2007,7 @@ class Database {
 
     const drizzle = getDrizzleDb();
     if (drizzle) {
-      drizzle
+      await drizzle
         .update(schema.images)
         .set({
           title: img.title,
@@ -1952,14 +2018,13 @@ class Database {
           status: img.status || "published",
           updatedAt: new Date(),
         })
-        .where(eq(schema.images.id, id))
-        .catch(() => {});
+        .where(eq(schema.images.id, id));
     }
 
     return { success: true };
   }
 
-  public trashImage(id: string, user: User): { success: boolean; error?: string } {
+  public async trashImage(id: string, user: User): Promise<{ success: boolean; error?: string }> {
     const img = this.data.images.find((i) => i.id === id);
     if (!img) return { success: false, error: "រកមិនឃើញរូបភាពនេះទេ។" };
 
@@ -1977,21 +2042,20 @@ class Database {
 
     const drizzle = getDrizzleDb();
     if (drizzle) {
-      drizzle
+      await drizzle
         .update(schema.images)
         .set({
           status: "trashed",
           deletedAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(schema.images.id, id))
-        .catch(() => {});
+        .where(eq(schema.images.id, id));
     }
 
     return { success: true };
   }
 
-  public restoreImage(id: string, user: User): { success: boolean; error?: string } {
+  public async restoreImage(id: string, user: User): Promise<{ success: boolean; error?: string }> {
     const img = this.data.images.find((i) => i.id === id);
     if (!img) return { success: false, error: "រកមិនឃើញរូបភាពនេះទេ។" };
 
@@ -2009,15 +2073,14 @@ class Database {
 
     const drizzle = getDrizzleDb();
     if (drizzle) {
-      drizzle
+      await drizzle
         .update(schema.images)
         .set({
           status: "published",
           deletedAt: null,
           updatedAt: new Date(),
         })
-        .where(eq(schema.images.id, id))
-        .catch(() => {});
+        .where(eq(schema.images.id, id));
     }
 
     return { success: true };
@@ -2080,7 +2143,7 @@ class Database {
     return { success: true };
   }
 
-  public batchTrashImages(ids: string[], user: User): { success: boolean; affected: number } {
+  public async batchTrashImages(ids: string[], user: User): Promise<{ success: boolean; affected: number }> {
     const idSet = new Set(ids);
     let count = 0;
     for (const img of this.data.images) {
@@ -2102,21 +2165,20 @@ class Database {
 
       const drizzle = getDrizzleDb();
       if (drizzle) {
-        drizzle
+        await drizzle
           .update(schema.images)
           .set({
             status: "trashed",
             deletedAt: new Date(),
             updatedAt: new Date(),
           })
-          .where(inArray(schema.images.id, ids))
-          .catch(() => {});
+          .where(inArray(schema.images.id, ids));
       }
     }
     return { success: true, affected: count };
   }
 
-  public batchRestoreImages(ids: string[], user: User): { success: boolean; affected: number } {
+  public async batchRestoreImages(ids: string[], user: User): Promise<{ success: boolean; affected: number }> {
     const idSet = new Set(ids);
     let count = 0;
     for (const img of this.data.images) {
@@ -2138,25 +2200,24 @@ class Database {
 
       const drizzle = getDrizzleDb();
       if (drizzle) {
-        drizzle
+        await drizzle
           .update(schema.images)
           .set({
             status: "published",
             deletedAt: null,
             updatedAt: new Date(),
           })
-          .where(inArray(schema.images.id, ids))
-          .catch(() => {});
+          .where(inArray(schema.images.id, ids));
       }
     }
     return { success: true, affected: count };
   }
 
-  public batchMoveImages(
+  public async batchMoveImages(
     ids: string[],
     targetAlbumId: string,
     user: User,
-  ): { success: boolean; affected: number; error?: string } {
+  ): Promise<{ success: boolean; affected: number; error?: string }> {
     const targetAlbum = this.data.albums.find((a) => a.id === targetAlbumId);
     const idSet = new Set(ids);
     let count = 0;
@@ -2179,24 +2240,23 @@ class Database {
 
       const drizzle = getDrizzleDb();
       if (drizzle) {
-        drizzle
+        await drizzle
           .update(schema.images)
           .set({
             albumId: targetAlbumId,
             updatedAt: new Date(),
           })
-          .where(inArray(schema.images.id, ids))
-          .catch(() => {});
+          .where(inArray(schema.images.id, ids));
       }
     }
     return { success: true, affected: count };
   }
 
-  public batchUpdateImageTags(
+  public async batchUpdateImageTags(
     ids: string[],
     tags: string,
     user: User,
-  ): { success: boolean; affected: number; error?: string } {
+  ): Promise<{ success: boolean; affected: number; error?: string }> {
     const idSet = new Set(ids);
     let count = 0;
     for (const img of this.data.images) {
@@ -2218,14 +2278,13 @@ class Database {
 
       const drizzle = getDrizzleDb();
       if (drizzle) {
-        drizzle
+        await drizzle
           .update(schema.images)
           .set({
             tags: tags || null,
             updatedAt: new Date(),
           })
-          .where(inArray(schema.images.id, ids))
-          .catch(() => {});
+          .where(inArray(schema.images.id, ids));
       }
     }
     return { success: true, affected: count };
@@ -2293,8 +2352,8 @@ class Database {
     };
   }
 
-  public deleteImage(id: string, user: User): { success: boolean; error?: string } {
-    return this.trashImage(id, user);
+  public async deleteImage(id: string, user: User): Promise<{ success: boolean; error?: string }> {
+    return await this.trashImage(id, user);
   }
 
   public getDashboardStats() {

@@ -15,7 +15,7 @@ import { Upload, X, Rocket, ImagePlus, Loader2, FolderOpen, Check } from "lucide
 import { toast } from "sonner";
 import { useUploadImage } from "@/hooks/useAdminData";
 import { useAlbums, useFestivals, useYears } from "@/hooks/useArchiveData";
-import { resolveImageUrl } from "@/lib/asset-resolver";
+import { resolveImageUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
 import { Link } from "@tanstack/react-router";
 
 const MAX = 50;
@@ -60,6 +60,7 @@ export function UploadModal({
       !availableAlbums.some((a) => a.id === selectedAlbumId)
     ) {
       setSelectedAlbumId(availableAlbums[0]?.id || "");
+      setSelectedAlbumId("");
     }
   }, [availableAlbums, selectedAlbumId]);
 
@@ -92,6 +93,9 @@ export function UploadModal({
 
     try {
       let successCount = 0;
+      let failedCount = 0;
+      let r2ConfirmedCount = 0;
+
       for (const item of files) {
         try {
           const itemTitle = item.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
@@ -106,9 +110,23 @@ export function UploadModal({
             formData.append("tags", description.trim());
           }
 
-          await uploadImageMutation.mutateAsync(formData);
+          const res = (await uploadImageMutation.mutateAsync(formData)) as {
+            success?: boolean;
+            storageProvider?: string;
+            url?: string;
+            data?: { storageProvider?: string };
+          };
           successCount++;
+
+          const isR2 =
+            res?.storageProvider === "r2" ||
+            res?.data?.storageProvider === "r2" ||
+            (typeof res?.url === "string" && !res.url.startsWith("/uploads/"));
+          if (isR2) {
+            r2ConfirmedCount++;
+          }
         } catch (err: unknown) {
+          failedCount++;
           console.error("Upload error:", err);
           const msg = err instanceof Error ? err.message : "បរាជ័យ";
           toast.error(`មិនអាច Upload «${item.name}»: ${msg}`);
@@ -116,8 +134,18 @@ export function UploadModal({
       }
 
       if (successCount > 0) {
+        const storageDesc =
+          r2ConfirmedCount === successCount
+            ? "រក្សាទុកក្នុង Cloudflare R2"
+            : r2ConfirmedCount > 0
+              ? `${toKhmerNumber(r2ConfirmedCount)} រក្សាទុកក្នុង Cloudflare R2`
+              : "រក្សាទុកក្នុងទិន្នន័យបណ្ណសារ";
+
+        const failureSuffix =
+          failedCount > 0 ? ` (បរាជ័យ ${toKhmerNumber(failedCount)} រូបភាព)` : "";
+
         toast.success(`បានបង្ហោះរូបភាពចូល Album «${selectedAlbum?.title || festival.name}» ដោយជោគជ័យ!`, {
-          description: `ឆ្នាំ ${toKhmerNumber(year)} · ${toKhmerNumber(successCount)} រូបភាពបានរក្សាទុកក្នុង Cloudflare R2`,
+          description: `ឆ្នាំ ${toKhmerNumber(year)} · ${toKhmerNumber(successCount)} រូបភាព${storageDesc}${failureSuffix}`,
         });
         files.forEach((f) => URL.revokeObjectURL(f.url));
         setFiles([]);
@@ -305,6 +333,12 @@ export function UploadModal({
                             src={coverSrc}
                             alt={alb.title}
                             className="h-full w-full object-cover"
+                            onError={(e) => {
+                              const target = e.currentTarget;
+                              if (target.src !== BROKEN_IMAGE_FALLBACK) {
+                                target.src = BROKEN_IMAGE_FALLBACK;
+                              }
+                            }}
                           />
                         ) : (
                           <div className="grid h-full w-full place-items-center bg-secondary text-xs text-muted-foreground">

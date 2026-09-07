@@ -4,6 +4,7 @@ import type { Album } from "@/data/archive";
 import { toKhmerNumber } from "@/data/archive";
 import { LikeButton } from "./LikeButton";
 import { FavoriteButton } from "./FavoriteButton";
+import { resolveImageUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
 
 export function AlbumCard({
   album,
@@ -19,17 +20,29 @@ export function AlbumCard({
       <div className="relative aspect-[4/3] overflow-hidden bg-secondary/80">
         {/* Ambient Blurred Backdrop for Portrait/Wide covers */}
         <img
-          src={album.coverImage || album.festival.cover}
+          src={resolveImageUrl(album.coverImage || album.festival.cover, album.festivalId)}
           alt=""
           aria-hidden="true"
           className="absolute inset-0 h-full w-full object-cover blur-md scale-110 opacity-35 dark:opacity-25 pointer-events-none"
+          onError={(e) => {
+            const target = e.currentTarget;
+            if (target.src !== BROKEN_IMAGE_FALLBACK) {
+              target.src = BROKEN_IMAGE_FALLBACK;
+            }
+          }}
         />
         {/* Uncropped Natural Cover */}
         <img
-          src={album.coverImage || album.festival.cover}
+          src={resolveImageUrl(album.coverImage || album.festival.cover, album.festivalId)}
           alt={`${album.title || album.festival.name} ឆ្នាំ ${album.year}`}
           loading="lazy"
           className="relative z-[1] h-full w-full object-contain transition-transform duration-500 group-hover:scale-105"
+          onError={(e) => {
+            const target = e.currentTarget;
+            if (target.src !== BROKEN_IMAGE_FALLBACK) {
+              target.src = BROKEN_IMAGE_FALLBACK;
+            }
+          }}
         />
         <div className="absolute inset-0 z-[2] card-scrim" />
 

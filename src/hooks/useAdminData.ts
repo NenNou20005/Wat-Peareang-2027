@@ -690,7 +690,7 @@ export function useUploadImage() {
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed to upload image");
-      return json.data;
+      return json;
     },
     onSuccess: async (_, formData) => {
       const albumId = formData.get("albumId") as string | null;
@@ -698,6 +698,8 @@ export function useUploadImage() {
         queryClient.invalidateQueries({ queryKey: ["admin", "images"] }),
         queryClient.invalidateQueries({ queryKey: ["admin", "albums"] }),
         queryClient.invalidateQueries({ queryKey: adminKeys.dashboard() }),
+        queryClient.invalidateQueries({ queryKey: ["archive", "images"] }),
+        queryClient.invalidateQueries({ queryKey: ["archive", "slideshow-albums"] }),
         queryClient.invalidateQueries({ queryKey: ["archive", "albums"] }),
         queryClient.invalidateQueries({ queryKey: ["archive", "stats"] }),
         queryClient.invalidateQueries({ queryKey: ["archive", "search"] }),
@@ -739,11 +741,14 @@ export function useUpdateImage() {
     onSuccess: async (_, variables) => {
       const invalidations = [
         queryClient.invalidateQueries({ queryKey: ["admin", "images"] }),
+        queryClient.invalidateQueries({ queryKey: ["archive", "images"] }),
+        queryClient.invalidateQueries({ queryKey: ["archive", "slideshow-albums"] }),
         queryClient.invalidateQueries({ queryKey: ["archive", "albums"] }),
       ];
       if (variables.albumId) {
         invalidations.push(
           queryClient.invalidateQueries({ queryKey: archiveKeys.albumPhotos(variables.albumId) }),
+          queryClient.invalidateQueries({ queryKey: archiveKeys.album(variables.albumId) }),
         );
       }
       await Promise.all(invalidations);
@@ -768,6 +773,8 @@ export function useTrashImage() {
         queryClient.invalidateQueries({ queryKey: ["admin", "albums"] }),
         queryClient.invalidateQueries({ queryKey: adminKeys.trash() }),
         queryClient.invalidateQueries({ queryKey: adminKeys.dashboard() }),
+        queryClient.invalidateQueries({ queryKey: ["archive", "images"] }),
+        queryClient.invalidateQueries({ queryKey: ["archive", "slideshow-albums"] }),
         queryClient.invalidateQueries({ queryKey: ["archive", "albums"] }),
         queryClient.invalidateQueries({ queryKey: ["archive", "stats"] }),
         queryClient.invalidateQueries({ queryKey: ["archive", "search"] }),

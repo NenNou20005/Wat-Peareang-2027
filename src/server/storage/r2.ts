@@ -35,20 +35,33 @@ export class R2StorageProvider implements StorageProvider {
   private publicUrl: string;
 
   constructor() {
-    this.bucketName = process.env["R2_BUCKET_NAME"] || "";
-    this.publicUrl = (
+    this.bucketName = (process.env["R2_BUCKET_NAME"] || "").trim();
+    let rawPublicUrl = (
       process.env["R2_PUBLIC_URL"] ||
       process.env["R2_CUSTOM_DOMAIN"] ||
       ""
-    ).replace(/\/$/, "");
+    )
+      .trim()
+      .replace(/\/+$/, "");
+
+    if (
+      rawPublicUrl &&
+      !rawPublicUrl.startsWith("http://") &&
+      !rawPublicUrl.startsWith("https://")
+    ) {
+      rawPublicUrl = `https://${rawPublicUrl}`;
+    }
+    this.publicUrl = rawPublicUrl;
   }
 
   public static isConfigured(): boolean {
     const hasKey =
-      Boolean(process.env["R2_ACCESS_KEY_ID"]) && Boolean(process.env["R2_SECRET_ACCESS_KEY"]);
-    const hasBucket = Boolean(process.env["R2_BUCKET_NAME"]);
+      Boolean(process.env["R2_ACCESS_KEY_ID"]?.trim()) &&
+      Boolean(process.env["R2_SECRET_ACCESS_KEY"]?.trim());
+    const hasBucket = Boolean(process.env["R2_BUCKET_NAME"]?.trim());
     const hasEndpointOrAccount =
-      Boolean(process.env["R2_ENDPOINT"]) || Boolean(process.env["R2_ACCOUNT_ID"]);
+      Boolean(process.env["R2_ENDPOINT"]?.trim()) ||
+      Boolean(process.env["R2_ACCOUNT_ID"]?.trim());
 
     return hasKey && hasBucket && hasEndpointOrAccount;
   }
@@ -281,10 +294,11 @@ export class R2StorageProvider implements StorageProvider {
   } | null> {
     try {
       const client = this.getClient();
+      const cleanKey = key.replace(/^\/+/, "");
       const res = await client.send(
         new GetObjectCommand({
           Bucket: this.bucketName,
-          Key: key,
+          Key: cleanKey,
         }),
       );
 
@@ -303,10 +317,11 @@ export class R2StorageProvider implements StorageProvider {
   }
 
   public getPublicUrl(key: string): string {
+    const cleanKey = key.replace(/^\/+/, "");
     if (this.publicUrl) {
-      return `${this.publicUrl}/${key}`;
+      return `${this.publicUrl}/${cleanKey}`;
     }
-    return `/api/storage/r2/${encodeURIComponent(key)}`;
+    return `/api/storage/r2/${cleanKey}`;
   }
 
   private extractKeyFromUrl(urlOrKey: string): string {
@@ -320,14 +335,20 @@ export class R2StorageProvider implements StorageProvider {
       !urlOrKey.startsWith("https://") &&
       !urlOrKey.startsWith("/")
     ) {
-      return urlOrKey;
+      return urlOrKey.replace(/^\/+/, "");
     }
     if (urlOrKey.includes("/api/storage/r2/")) {
       const match = urlOrKey.match(/\/api\/storage\/r2\/(.+)/);
-      return match && match[1] ? decodeURIComponent(match[1]) : "";
+      return match && match[1] ? decodeURIComponent(match[1]).replace(/^\/+/, "") : "";
     }
     if (this.publicUrl && urlOrKey.startsWith(this.publicUrl)) {
-      return urlOrKey.replace(this.publicUrl, "").replace(/^\//, "");
+      return urlOrKey.replace(this.publicUrl, "").replace(/^\/+/, "");
+    }
+    // Handle match if protocol differed (http vs https)
+    const publicUrlWithoutProto = this.publicUrl.replace(/^https?:\/\//, "");
+    if (publicUrlWithoutProto && urlOrKey.includes(publicUrlWithoutProto)) {
+      const idx = urlOrKey.indexOf(publicUrlWithoutProto);
+      return urlOrKey.substring(idx + publicUrlWithoutProto.length).replace(/^\/+/, "");
     }
     const parts = urlOrKey.split("/");
     return parts.slice(-2).join("/");

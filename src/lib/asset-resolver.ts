@@ -81,3 +81,25 @@ export function resolveImageUrl(url?: string | null, festivalId?: string): strin
 
   return url;
 }
+
+/**
+ * Safe, clear broken-image SVG fallback to prevent masking load errors with festival placeholders.
+ */
+export const BROKEN_IMAGE_FALLBACK =
+  "data:image/svg+xml;charset=utf-8," +
+  encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" width="100%" height="100%">
+  <rect width="100%" height="100%" fill="#f8fafc" stroke="#e2e8f0" stroke-width="2"/>
+  <g transform="translate(176, 95)" stroke="#94a3b8" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="1" y1="1" x2="47" y2="47"/>
+    <path d="M21 21H7a4 4 0 0 0-4 4v16a4 4 0 0 0 4 4h34a4 4 0 0 0 4-4v-5"/>
+    <path d="M45 31.5V11a4 4 0 0 0-4-4H15"/>
+    <circle cx="18" cy="18" r="3"/>
+    <path d="m42 33-8-8-5 5"/>
+  </g>
+  <text x="200" y="185" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#64748b" text-anchor="middle">
+    មិនអាចផ្ទុករូបភាពបាន
+  </text>
+  <text x="200" y="205" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#94a3b8" text-anchor="middle">
+    (Image Unavailable)
+  </text>
+</svg>`);
