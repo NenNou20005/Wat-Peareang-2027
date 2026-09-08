@@ -212,10 +212,10 @@ function AdminVideosPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validate size (100MB)
-    const MAX_SIZE = 100 * 1024 * 1024;
+    // Validate size (5000MB)
+    const MAX_SIZE = 5000 * 1024 * 1024;
     if (file.size > MAX_SIZE) {
-      toast.error("ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 100MB)។");
+      toast.error("ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 5000MB)។");
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
@@ -337,7 +337,7 @@ function AdminVideosPage() {
               គ្រប់គ្រងវីដេអូ & Upload
             </h1>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              បង្ហោះ និងគ្រប់គ្រងវីដេអូតាម Album ក្នុងប្រព័ន្ធបណ្ណសារវត្តពារាំង (MP4, WebM, MOV រហូតដល់ 100MB)។
+              បង្ហោះ និងគ្រប់គ្រងវីដេអូតាម Album ក្នុងប្រព័ន្ធបណ្ណសារវត្តពារាំង (MP4, WebM, MOV រហូតដល់ 5000MB)។
             </p>
           </div>
 
@@ -578,7 +578,7 @@ function AdminVideosPage() {
                 <Upload className="h-5 w-5 text-gold" /> បង្ហោះវីដេអូថ្មី (Upload Video)
               </DialogTitle>
               <DialogDescription className="text-xs">
-                ជ្រើសរើស Album គោលដៅ និងឯកសារវីដេអូ (MP4, WebM, MOV ទំហំអតិបរមា 100MB)។
+                ជ្រើសរើស Album គោលដៅ និងឯកសារវីដេអូ (MP4, WebM, MOV ទំហំអតិបរមា 5000MB)។
               </DialogDescription>
             </DialogHeader>
 
@@ -693,7 +693,7 @@ function AdminVideosPage() {
                         ចុចទីនេះដើម្បីជ្រើសរើសវីដេអូ
                       </span>
                       <span className="text-[10px] text-muted-foreground">
-                        អនុញ្ញាតតែ MP4, WebM, QuickTime MOV (អតិបរមា 100MB)
+                        អនុញ្ញាតតែ MP4, WebM, QuickTime MOV (អតិបរមា 5000MB)
                       </span>
                     </div>
                   )}

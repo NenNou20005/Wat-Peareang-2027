@@ -284,7 +284,7 @@ function AdminPrivateArchivePage() {
     const fileList = Array.from(files);
     const validMimes = ["video/mp4", "video/webm", "video/quicktime"];
     const validExts = [".mp4", ".webm", ".mov"];
-    const maxSizeBytes = 100 * 1024 * 1024; // 100MB
+    const maxSizeBytes = 5000 * 1024 * 1024; // 5000MB (5GB)
 
     setIsUploadingVideo(true);
     let successCount = 0;
@@ -308,7 +308,7 @@ function AdminPrivateArchivePage() {
       }
 
       if (file.size > maxSizeBytes) {
-        toast.error(`ឯកសារ «${file.name}» មានទំហំលើសពី 100MB`);
+        toast.error(`ឯកសារ «${file.name}» មានទំហំលើសពី 5000MB`);
         failCount++;
         continue;
       }
@@ -715,7 +715,7 @@ function AdminPrivateArchivePage() {
                   <Film className="h-12 w-12 text-muted-foreground/50 mb-3" />
                   <h3 className="font-semibold text-foreground">មិនទាន់មានវីដេអូនៅក្នុង Album នេះឡើយ</h3>
                   <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-                    ចុចប៊ូតុង «បង្ហោះវីដេអូសម្ងាត់» ខាងលើ ដើម្បីជ្រើសរើសវីដេអូ (MP4, WebM, MOV) ទំហំរហូតដល់ 100MB។
+                    ចុចប៊ូតុង «បង្ហោះវីដេអូសម្ងាត់» ខាងលើ ដើម្បីជ្រើសរើសវីដេអូ (MP4, WebM, MOV) ទំហំរហូតដល់ 5000MB។
                   </p>
                   <Button
                     variant="outline"

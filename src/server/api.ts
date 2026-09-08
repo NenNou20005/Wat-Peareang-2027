@@ -1925,10 +1925,10 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
         return rateLimitedResponse(rl);
       }
 
-      // Early content-length check (100MB + 1MB multipart overhead)
+      // Early content-length check (5000MB + 1MB multipart overhead)
       const declaredLength = Number(request.headers.get("content-length") || "0");
       if (declaredLength > LIMITS.videoBytes + 1024 * 1024) {
-        return json({ success: false, error: "ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 100MB)។" }, 413);
+        return json({ success: false, error: "ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 5000MB)។" }, 413);
       }
 
       try {
@@ -1953,7 +1953,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
         }
 
         if (file.size > LIMITS.videoBytes) {
-          return json({ success: false, error: "ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 100MB)។" }, 413);
+          return json({ success: false, error: "ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 5000MB)។" }, 413);
         }
 
         // Validate target album exists in PostgreSQL
@@ -3397,10 +3397,10 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       return rateLimitedResponse(rl);
     }
 
-    // Early content-length check (100MB limit + 1MB multipart overhead)
+    // Early content-length check (5000MB limit + 1MB multipart overhead)
     const declaredLength = Number(request.headers.get("content-length") || "0");
     if (declaredLength > LIMITS.videoBytes + 1024 * 1024) {
-      return json({ success: false, error: "ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 100MB)។" }, 413);
+      return json({ success: false, error: "ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 5000MB)។" }, 413);
     }
 
     try {
@@ -3419,7 +3419,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       }
 
       if (file.size > LIMITS.videoBytes) {
-        return json({ success: false, error: "ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 100MB)។" }, 413);
+        return json({ success: false, error: "ទំហំវីដេអូធំជាងកំណត់ (អតិបរមា 5000MB)។" }, 413);
       }
 
       // Validate target private album exists in PostgreSQL

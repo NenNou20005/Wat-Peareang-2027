@@ -20,8 +20,8 @@ export const LIMITS = {
   uploadBatch: 50,
   /** Maximum accepted per-image byte size reported by the client. */
   imageBytes: 15 * 1024 * 1024,
-  /** Maximum accepted per-video byte size (100MB foundation limit). */
-  videoBytes: 100 * 1024 * 1024,
+  /** Maximum accepted per-video byte size (5000MB / 5GB limit). */
+  videoBytes: 5000 * 1024 * 1024,
   id: 128,
   shortText: 200,
   mediumText: 500,
