@@ -1,13 +1,20 @@
 import dotenv from "dotenv";
 dotenv.config();
 import crypto from "node:crypto";
+import { Readable } from "node:stream";
 import {
   S3Client,
   PutObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
 } from "@aws-sdk/client-s3";
-import type { StorageProvider, StoredImageResult, StoredVideoResult } from "./index";
+import type {
+  StorageProvider,
+  StoredImageResult,
+  StoredVideoResult,
+  StorageObjectStream,
+} from "./index";
 
 function getExtensionFromMime(mime: string): string {
   const mimeMap: Record<string, string> = {
@@ -312,6 +319,77 @@ export class R2StorageProvider implements StorageProvider {
       };
     } catch (err) {
       console.error("[Cloudflare R2 GetObject Error]:", err);
+      return null;
+    }
+  }
+
+  public async getObjectStream(key: string, range?: string): Promise<StorageObjectStream | null> {
+    try {
+      const client = this.getClient();
+      const cleanKey = key.replace(/^\/+/, "");
+      const commandInput: { Bucket: string; Key: string; Range?: string } = {
+        Bucket: this.bucketName,
+        Key: cleanKey,
+      };
+
+      if (range && range.trim().length > 0) {
+        commandInput.Range = range.trim();
+      }
+
+      const res = await client.send(new GetObjectCommand(commandInput));
+      if (!res.Body) return null;
+
+      let webStream: ReadableStream;
+      const rawBody = res.Body as any;
+      if (typeof rawBody.transformToWebStream === "function") {
+        webStream = rawBody.transformToWebStream() as ReadableStream;
+      } else {
+        webStream = Readable.toWeb(rawBody) as unknown as ReadableStream;
+      }
+
+      const status = range && res.ContentRange ? 206 : 200;
+
+      return {
+        stream: webStream,
+        contentType: res.ContentType || "application/octet-stream",
+        contentLength: res.ContentLength !== undefined ? Number(res.ContentLength) : undefined,
+        contentRange: res.ContentRange || undefined,
+        acceptRanges: res.AcceptRanges || "bytes",
+        status,
+      };
+    } catch (err: any) {
+      if (err?.$metadata?.httpStatusCode === 416) {
+        let totalSize: number | undefined;
+        try {
+          const client = this.getClient();
+          const cleanKey = key.replace(/^\/+/, "");
+          const head = await client.send(
+            new HeadObjectCommand({
+              Bucket: this.bucketName,
+              Key: cleanKey,
+            })
+          );
+          if (head.ContentLength !== undefined) {
+            totalSize = Number(head.ContentLength);
+          }
+        } catch {
+          // ignore head error and proceed with standard fallback
+        }
+
+        return {
+          stream: new ReadableStream({
+            start(controller) {
+              controller.close();
+            },
+          }),
+          contentType: "application/octet-stream",
+          contentLength: 0,
+          contentRange: totalSize !== undefined ? `bytes */${totalSize}` : undefined,
+          acceptRanges: "bytes",
+          status: 416,
+        };
+      }
+      console.error("[Cloudflare R2 GetObjectStream Error]:", err?.message || err);
       return null;
     }
   }

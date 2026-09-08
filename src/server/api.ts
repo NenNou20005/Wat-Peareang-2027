@@ -207,7 +207,29 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     const rawKey = pathname.replace("/api/storage/r2/", "");
     const key = decodeURIComponent(rawKey);
     const storage = getStorageProvider();
-    if (storage.getObject) {
+    const rangeHeader = request.headers.get("range") || undefined;
+
+    if (storage.getObjectStream) {
+      const obj = await storage.getObjectStream(key, rangeHeader);
+      if (obj) {
+        const responseHeaders: Record<string, string> = {
+          "Content-Type": obj.contentType,
+          "Accept-Ranges": obj.acceptRanges || "bytes",
+          "Cache-Control": "public, max-age=31536000, immutable",
+        };
+        if (obj.contentLength !== undefined) {
+          responseHeaders["Content-Length"] = String(obj.contentLength);
+        }
+        if (obj.contentRange) {
+          responseHeaders["Content-Range"] = obj.contentRange;
+        }
+
+        return new Response(obj.stream, {
+          status: obj.status,
+          headers: responseHeaders,
+        });
+      }
+    } else if (storage.getObject) {
       const obj = await storage.getObject(key);
       if (obj) {
         return new Response(Buffer.from(obj.body), {
@@ -3303,6 +3325,26 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       }
 
       const storage = getStorageProvider();
+      if (storage.getObjectStream) {
+        const obj = await storage.getObjectStream(imgRecord.r2Key);
+        if (!obj) {
+          return new Response("Image asset not found in storage", { status: 404 });
+        }
+        const headers: Record<string, string> = {
+          "Content-Type": obj.contentType || imgRecord.mimeType || "image/jpeg",
+          "Cache-Control": "private, no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+          "X-Content-Type-Options": "nosniff",
+        };
+        if (obj.contentLength !== undefined) {
+          headers["Content-Length"] = String(obj.contentLength);
+        }
+        return new Response(obj.stream, {
+          status: 200,
+          headers,
+        });
+      }
+
       if (!storage.getObject) {
         return new Response("Storage reader not supported", { status: 500 });
       }
@@ -3577,6 +3619,36 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       }
 
       const storage = getStorageProvider();
+      const rangeHeader = request.headers.get("range") || undefined;
+      const mimeType = videoRecord.mimeType || "video/mp4";
+
+      if (storage.getObjectStream) {
+        const obj = await storage.getObjectStream(videoRecord.r2Key, rangeHeader);
+        if (!obj) {
+          return new Response("Video File Not Found in Storage", { status: 404 });
+        }
+
+        const headers: Record<string, string> = {
+          "Content-Type": obj.contentType || mimeType,
+          "Accept-Ranges": obj.acceptRanges || "bytes",
+          "Cache-Control": "private, no-cache, no-store, must-revalidate",
+          Pragma: "no-cache",
+          "X-Content-Type-Options": "nosniff",
+        };
+
+        if (obj.contentLength !== undefined) {
+          headers["Content-Length"] = String(obj.contentLength);
+        }
+        if (obj.contentRange) {
+          headers["Content-Range"] = obj.contentRange;
+        }
+
+        return new Response(obj.stream, {
+          status: obj.status,
+          headers,
+        });
+      }
+
       if (!storage.getObject) {
         return new Response("Storage reader not supported", { status: 500 });
       }
@@ -3588,9 +3660,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
       const totalSize = objectResult.contentLength || videoRecord.size || objectResult.body.length;
       const fullBuffer = Buffer.from(objectResult.body);
-      const mimeType = objectResult.contentType || videoRecord.mimeType || "video/mp4";
 
-      const rangeHeader = request.headers.get("range");
       if (rangeHeader && rangeHeader.startsWith("bytes=")) {
         const parts = rangeHeader.replace("bytes=", "").split("-");
         const start = parseInt(parts[0] || "0", 10);
@@ -3748,7 +3818,9 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
   if (pathname === "/api/archive/festivals" && method === "GET") {
     try {
       const fests = await getPostgresFestivals();
-      return json({ success: true, data: fests });
+      return json({ success: true, data: fests }, 200, {
+        "Cache-Control": "public, max-age=120, s-maxage=300",
+      });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to fetch festivals";
       return json({ success: false, error: msg }, 500);
@@ -3798,7 +3870,9 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
         festivalId: festivalIdParam,
         search: searchParam,
       });
-      return json({ success: true, data: albumList });
+      return json({ success: true, data: albumList }, 200, {
+        "Cache-Control": "public, max-age=60, s-maxage=120",
+      });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to fetch albums";
       return json({ success: false, error: msg }, 500);
@@ -3863,7 +3937,9 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       const yearParam = url.searchParams.get("year");
       const year = yearParam ? parseInt(yearParam, 10) : undefined;
       const stats = await getPostgresArchiveStats(isNaN(year as number) ? undefined : year);
-      return json({ success: true, data: stats });
+      return json({ success: true, data: stats }, 200, {
+        "Cache-Control": "public, max-age=60, s-maxage=120",
+      });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to fetch archive stats";
       return json({ success: false, error: msg }, 500);

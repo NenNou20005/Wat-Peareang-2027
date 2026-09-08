@@ -17,6 +17,15 @@ export interface StoredVideoResult {
   mimeType: string;
 }
 
+export interface StorageObjectStream {
+  stream: ReadableStream;
+  contentType: string;
+  contentLength?: number | undefined;
+  contentRange?: string | undefined;
+  acceptRanges?: string | undefined;
+  status: number;
+}
+
 export interface StorageProvider {
   saveImage(params: {
     buffer: Buffer;
@@ -30,6 +39,7 @@ export interface StorageProvider {
     contentType: string;
     contentLength: number;
   } | null>;
+  getObjectStream?(key: string, range?: string): Promise<StorageObjectStream | null>;
   savePrivateImage?(params: {
     buffer: Buffer;
     originalFilename: string;
