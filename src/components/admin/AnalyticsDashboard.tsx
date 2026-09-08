@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import {
   TrendingUp,
   BarChart3,
@@ -16,14 +16,32 @@ import {
 import { Button } from "@/components/ui/button";
 import { GlobalDateFilter } from "./GlobalDateFilter";
 import { OverviewKPISection } from "./OverviewKPISection";
-import { TrafficReportView } from "./TrafficReportView";
-import { EngagementReportView } from "./EngagementReportView";
-import { ContentPerformanceView } from "./ContentPerformanceView";
-import { ContentGrowthView } from "./ContentGrowthView";
-import { AdminActivityReportView } from "./AdminActivityReportView";
-import { SearchAnalyticsView } from "./SearchAnalyticsView";
-import { PopularityIntelligenceView } from "./PopularityIntelligenceView";
-import { ReportExportModal } from "./ReportExportModal";
+
+const TrafficReportView = lazy(() =>
+  import("./TrafficReportView").then((m) => ({ default: m.TrafficReportView }))
+);
+const EngagementReportView = lazy(() =>
+  import("./EngagementReportView").then((m) => ({ default: m.EngagementReportView }))
+);
+const ContentPerformanceView = lazy(() =>
+  import("./ContentPerformanceView").then((m) => ({ default: m.ContentPerformanceView }))
+);
+const ContentGrowthView = lazy(() =>
+  import("./ContentGrowthView").then((m) => ({ default: m.ContentGrowthView }))
+);
+const AdminActivityReportView = lazy(() =>
+  import("./AdminActivityReportView").then((m) => ({ default: m.AdminActivityReportView }))
+);
+const SearchAnalyticsView = lazy(() =>
+  import("./SearchAnalyticsView").then((m) => ({ default: m.SearchAnalyticsView }))
+);
+const PopularityIntelligenceView = lazy(() =>
+  import("./PopularityIntelligenceView").then((m) => ({ default: m.PopularityIntelligenceView }))
+);
+const ReportExportModal = lazy(() =>
+  import("./ReportExportModal").then((m) => ({ default: m.ReportExportModal }))
+);
+
 import { useReportsSummary, type ReportPeriod } from "@/hooks/useReportsData";
 import { cn } from "@/lib/utils";
 
@@ -92,6 +110,15 @@ const DASHBOARD_TABS: Array<{
     icon: ShieldCheck,
   },
 ];
+
+function TabLoadingSkeleton() {
+  return (
+    <div className="rounded-3xl border border-border/70 bg-card p-12 text-center text-muted-foreground shadow-soft">
+      <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-gold border-t-transparent mb-3" />
+      <p className="text-sm">កំពុងផ្ទុកទិន្នន័យ...</p>
+    </div>
+  );
+}
 
 export function AnalyticsDashboard() {
   const [activeTab, setActiveTab] = useState<DashboardTabId>("overview");
@@ -216,6 +243,9 @@ export function AnalyticsDashboard() {
             <>
               <OverviewKPISection data={summaryData} />
               <TrafficReportView period={period} startDate={startDate} endDate={endDate} />
+              <Suspense fallback={<TabLoadingSkeleton />}>
+                <TrafficReportView period={period} startDate={startDate} endDate={endDate} />
+              </Suspense>
             </>
           ) : (
             <div className="rounded-3xl border border-destructive/30 bg-destructive/5 p-8 text-center text-destructive shadow-soft">
@@ -227,55 +257,75 @@ export function AnalyticsDashboard() {
 
       {/* Tab 2: Traffic & Views */}
       {activeTab === "traffic" && (
-        <TrafficReportView period={period} startDate={startDate} endDate={endDate} />
+        <Suspense fallback={<TabLoadingSkeleton />}>
+          <TrafficReportView period={period} startDate={startDate} endDate={endDate} />
+        </Suspense>
       )}
 
       {/* Tab 3: Engagement & Interactions */}
       {activeTab === "engagement" && (
-        <EngagementReportView period={period} startDate={startDate} endDate={endDate} />
+        <Suspense fallback={<TabLoadingSkeleton />}>
+          <EngagementReportView period={period} startDate={startDate} endDate={endDate} />
+        </Suspense>
       )}
 
       {/* Tab 4: Search Analytics */}
       {activeTab === "search" && (
-        <SearchAnalyticsView
-          period={
-            (["today", "7d", "30d", "all"].includes(period) ? period : "7d") as
-              "today" | "7d" | "30d" | "all"
-          }
-        />
+        <Suspense fallback={<TabLoadingSkeleton />}>
+          <SearchAnalyticsView
+            period={
+              (["today", "7d", "30d", "all"].includes(period) ? period : "7d") as
+                "today" | "7d" | "30d" | "all"
+            }
+          />
+        </Suspense>
       )}
 
       {/* Tab 5: Popularity Intelligence */}
       {activeTab === "popularity" && (
-        <PopularityIntelligenceView
-          period={
-            (["today", "7d", "30d", "all"].includes(period) ? period : "all") as
-              "today" | "7d" | "30d" | "all"
-          }
-        />
+        <Suspense fallback={<TabLoadingSkeleton />}>
+          <PopularityIntelligenceView
+            period={
+              (["today", "7d", "30d", "all"].includes(period) ? period : "all") as
+                "today" | "7d" | "30d" | "all"
+            }
+          />
+        </Suspense>
       )}
 
       {/* Tab 6: Content Performance */}
       {activeTab === "performance" && (
-        <ContentPerformanceView period={period} startDate={startDate} endDate={endDate} />
+        <Suspense fallback={<TabLoadingSkeleton />}>
+          <ContentPerformanceView period={period} startDate={startDate} endDate={endDate} />
+        </Suspense>
       )}
 
       {/* Tab 7: Archive Growth */}
-      {activeTab === "growth" && <ContentGrowthView />}
+      {activeTab === "growth" && (
+        <Suspense fallback={<TabLoadingSkeleton />}>
+          <ContentGrowthView />
+        </Suspense>
+      )}
 
       {/* Tab 8: Admin Audit Trail */}
       {activeTab === "activity" && (
-        <AdminActivityReportView period={period} startDate={startDate} endDate={endDate} />
+        <Suspense fallback={<TabLoadingSkeleton />}>
+          <AdminActivityReportView period={period} startDate={startDate} endDate={endDate} />
+        </Suspense>
       )}
 
       {/* Export Report Modal */}
-      <ReportExportModal
-        isOpen={showExportModal}
-        onClose={() => setShowExportModal(false)}
-        currentPeriod={period}
-        startDate={startDate}
-        endDate={endDate}
-      />
+      {showExportModal && (
+        <Suspense fallback={null}>
+          <ReportExportModal
+            isOpen={showExportModal}
+            onClose={() => setShowExportModal(false)}
+            currentPeriod={period}
+            startDate={startDate}
+            endDate={endDate}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

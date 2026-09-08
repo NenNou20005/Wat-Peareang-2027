@@ -1,7 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { AdminLayout } from "@/components/admin/AdminLayout";
-import { AnalyticsDashboard } from "@/components/admin/AnalyticsDashboard";
+
+const AnalyticsDashboard = lazy(() =>
+  import("@/components/admin/AnalyticsDashboard").then((m) => ({ default: m.AnalyticsDashboard }))
+);
 import { useAuth } from "@/hooks/useAuth";
 import {
   Sparkles,
@@ -182,7 +185,16 @@ function AdminDashboardPage() {
         )}
 
         {/* Phase 3.1: Visitor Tracking & Views Analytics Dashboard */}
-        <AnalyticsDashboard />
+        <Suspense
+          fallback={
+            <div className="rounded-3xl border border-border/70 bg-card p-12 text-center text-muted-foreground shadow-soft">
+              <div className="mx-auto h-8 w-8 animate-spin rounded-full border-2 border-gold border-t-transparent mb-3" />
+              <p className="text-sm">កំពុងផ្ទុកផ្ទាំងវិភាគទិន្នន័យ...</p>
+            </div>
+          }
+        >
+          <AnalyticsDashboard />
+        </Suspense>
 
         {/* Two-Column Grid: Recent Activity & Quick Links */}
         <div className="grid gap-6 lg:grid-cols-2">

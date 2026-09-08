@@ -9,9 +9,11 @@ import {
 } from "lucide-react";
 import { toKhmerNumber, type Festival } from "@/data/archive";
 import { cn } from "@/lib/utils";
-import { useMemo, useState } from "react";
+import { useMemo, useState, lazy, Suspense } from "react";
 import { Link } from "@tanstack/react-router";
-import { AddFestivalModal } from "@/components/site/AddFestivalModal";
+const AddFestivalModal = lazy(() =>
+  import("@/components/site/AddFestivalModal").then((m) => ({ default: m.AddFestivalModal }))
+);
 import { useYears, useFestivals, useAlbums } from "@/hooks/useArchiveData";
 import { useCreateAlbum } from "@/hooks/useAdminData";
 import { useAuth } from "@/hooks/useAuth";
@@ -347,15 +349,17 @@ export function FestivalPills({
       </div>
 
       {/* Modal: Add Festival */}
-      {canManageFestivals && (
-        <AddFestivalModal
-          open={isAddOpen}
-          onOpenChange={setIsAddOpen}
-          existingFestivalIds={allFestivals.map((f) => f.id)}
-          onFestivalAdded={(newFest) => {
-            setExtraFestivals((prev) => [...prev, newFest]);
-          }}
-        />
+      {canManageFestivals && isAddOpen && (
+        <Suspense fallback={null}>
+          <AddFestivalModal
+            open={isAddOpen}
+            onOpenChange={setIsAddOpen}
+            existingFestivalIds={allFestivals.map((f) => f.id)}
+            onFestivalAdded={(newFest) => {
+              setExtraFestivals((prev) => [...prev, newFest]);
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Modal: Add Album (Associated directly with active Festival and Year) */}

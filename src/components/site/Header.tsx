@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { Search, User, Menu, Upload, ShieldCheck, LogOut, LayoutDashboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -11,7 +11,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { UploadModal } from "@/components/site/UploadModal";
+const UploadModal = lazy(() =>
+  import("@/components/site/UploadModal").then((m) => ({ default: m.UploadModal }))
+);
 import { useAuth } from "@/hooks/useAuth";
 
 const nav = [
@@ -176,7 +178,11 @@ export function Header() {
           </Sheet>
         </div>
       </div>
-      {canUpload && <UploadModal open={uploadOpen} onOpenChange={setUploadOpen} />}
+      {canUpload && uploadOpen && (
+        <Suspense fallback={null}>
+          <UploadModal open={uploadOpen} onOpenChange={setUploadOpen} />
+        </Suspense>
+      )}
     </header>
   );
 }
