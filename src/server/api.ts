@@ -3870,17 +3870,30 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
     }
   }
 
-  // GET /api/archive/slideshow-albums (Home Slideshow Albums with all images grouped by Album)
+  // GET /api/archive/slideshow-albums (Home Slideshow Albums with representative sample images grouped by Album)
   if (pathname === "/api/archive/slideshow-albums" && method === "GET") {
     try {
-      const albums = await getArchiveAlbumsWithAllImages();
-      const totalImages = albums.reduce((sum, a) => sum + (a.images?.length || 0), 0);
-      return json({
-        success: true,
-        data: albums,
-        totalAlbums: albums.length,
-        totalImages,
+      const allParam = url.searchParams.get("all") === "true";
+      const maxAlbumsParam = url.searchParams.get("maxAlbums");
+      const maxImagesParam = url.searchParams.get("maxImages");
+      const albums = await getArchiveAlbumsWithAllImages({
+        all: allParam,
+        maxAlbums: maxAlbumsParam ? parseInt(maxAlbumsParam, 10) : undefined,
+        maxImagesPerAlbum: maxImagesParam ? parseInt(maxImagesParam, 10) : undefined,
       });
+      const totalImages = albums.reduce((sum, a) => sum + (a.images?.length || 0), 0);
+      return json(
+        {
+          success: true,
+          data: albums,
+          totalAlbums: albums.length,
+          totalImages,
+        },
+        200,
+        {
+          "Cache-Control": "public, max-age=120, s-maxage=300",
+        },
+      );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to fetch slideshow albums";
       return json({ success: false, error: msg }, 500);

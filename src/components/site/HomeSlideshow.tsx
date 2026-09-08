@@ -388,7 +388,7 @@ export function HomeSlideshow() {
               Album {toKhmerNumber(safeAlbumIndex + 1)}/{toKhmerNumber(albums.length)}
             </span>
             <span>•</span>
-            <span>{toKhmerNumber(totalImagesAllAlbums)} រូបសរុប</span>
+            <span>{toKhmerNumber(totalImagesAllAlbums)} រូប</span>
           </div>
         </div>
       </div>

@@ -1260,43 +1260,121 @@ export interface SlideshowAlbumData {
   }>;
 }
 
-export async function getArchiveAlbumsWithAllImages(): Promise<SlideshowAlbumData[]> {
+export async function getArchiveAlbumsWithAllImages(options?: {
+  maxAlbums?: number | undefined;
+  maxImagesPerAlbum?: number | undefined;
+  all?: boolean | undefined;
+}): Promise<SlideshowAlbumData[]> {
   const db = getDrizzleDb();
   if (!db || !isPostgresConfigured()) return [];
 
+  const isAll = options?.all === true;
+  const maxAlbums = Math.max(1, Math.min(50, options?.maxAlbums ?? 8));
+  const maxImagesPerAlbum = Math.max(1, Math.min(20, options?.maxImagesPerAlbum ?? 3));
+
   try {
-    const res = await db.execute(sql`
-      SELECT 
-        i.id,
-        i.album_id,
-        a.title as album_title,
-        a.year,
-        a.festival_id,
-        a.cover_image as album_cover,
-        a.location as album_location,
-        f.name as festival_name,
-        f.emoji as festival_emoji,
-        i.title,
-        i.description,
-        i.url,
-        i.thumbnail_url,
-        i.photographer,
-        i.date_taken,
-        i.copyright,
-        i.tags,
-        i.views_count,
-        i.likes_count,
-        i.downloads_count,
-        i.shares_count,
-        i.status,
-        i.uploaded_by,
-        i.created_at as image_created_at
-      FROM images i
-      JOIN albums a ON i.album_id = a.id
-      JOIN festivals f ON a.festival_id = f.id
-      WHERE i.status != 'trashed' AND i.deleted_at IS NULL
-      ORDER BY a.year DESC, f.name ASC, a.created_at DESC, i.created_at ASC;
-    `);
+    const res = isAll
+      ? await db.execute(sql`
+          SELECT 
+            i.id,
+            i.album_id,
+            a.title as album_title,
+            a.year,
+            a.festival_id,
+            a.cover_image as album_cover,
+            a.location as album_location,
+            f.name as festival_name,
+            f.emoji as festival_emoji,
+            i.title,
+            i.description,
+            i.url,
+            i.thumbnail_url,
+            i.photographer,
+            i.date_taken,
+            i.copyright,
+            i.tags,
+            i.views_count,
+            i.likes_count,
+            i.downloads_count,
+            i.shares_count,
+            i.status,
+            i.uploaded_by,
+            i.created_at as image_created_at
+          FROM images i
+          JOIN albums a ON i.album_id = a.id
+          JOIN festivals f ON a.festival_id = f.id
+          WHERE (i.status = 'published' OR i.status = 'approved') AND i.deleted_at IS NULL
+          ORDER BY a.year DESC, f.name ASC, a.created_at DESC, i.created_at ASC;
+        `)
+      : await db.execute(sql`
+          WITH featured_albums AS (
+            SELECT a.id, a.title, a.year, a.festival_id, a.cover_image, a.location, a.created_at
+            FROM albums a
+            WHERE (a.status = 'published' OR a.status = 'approved')
+              AND EXISTS (
+                SELECT 1 FROM images img 
+                WHERE img.album_id = a.id 
+                  AND (img.status = 'published' OR img.status = 'approved') 
+                  AND img.deleted_at IS NULL
+              )
+            ORDER BY a.year DESC, a.created_at DESC
+            LIMIT ${maxAlbums}
+          ),
+          ranked_images AS (
+            SELECT 
+              i.id,
+              i.album_id,
+              i.title,
+              i.description,
+              i.url,
+              i.thumbnail_url,
+              i.photographer,
+              i.date_taken,
+              i.copyright,
+              i.tags,
+              i.views_count,
+              i.likes_count,
+              i.downloads_count,
+              i.shares_count,
+              i.status,
+              i.uploaded_by,
+              i.created_at,
+              ROW_NUMBER() OVER (PARTITION BY i.album_id ORDER BY i.created_at ASC, i.id ASC) as rn
+            FROM images i
+            INNER JOIN featured_albums fa ON i.album_id = fa.id
+            WHERE (i.status = 'published' OR i.status = 'approved') AND i.deleted_at IS NULL
+          )
+          SELECT 
+            ri.id,
+            ri.album_id,
+            fa.title as album_title,
+            fa.year,
+            fa.festival_id,
+            fa.cover_image as album_cover,
+            fa.location as album_location,
+            f.name as festival_name,
+            f.emoji as festival_emoji,
+            ri.title,
+            ri.description,
+            ri.url,
+            ri.thumbnail_url,
+            ri.photographer,
+            ri.date_taken,
+            ri.copyright,
+            ri.tags,
+            ri.views_count,
+            ri.likes_count,
+            ri.downloads_count,
+            ri.shares_count,
+            ri.status,
+            ri.uploaded_by,
+            ri.created_at as image_created_at
+          FROM ranked_images ri
+          JOIN featured_albums fa ON ri.album_id = fa.id
+          JOIN festivals f ON fa.festival_id = f.id
+          WHERE ri.rn <= ${maxImagesPerAlbum}
+          ORDER BY fa.year DESC, f.name ASC, fa.created_at DESC, ri.created_at ASC;
+        `);
 
     const rows = (res.rows || []) as any[];
     if (rows.length === 0) return [];
