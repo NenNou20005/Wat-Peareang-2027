@@ -149,85 +149,101 @@ export async function getPostgresAlbums(filter?: {
   }
 
   try {
-    const conditions = [
-      or(eq(schema.albums.status, "published"), eq(schema.albums.status, "approved")),
-    ];
-
+    let filterClause = sql`(a.status = 'published' OR a.status = 'approved')`;
     if (filter?.year) {
-      conditions.push(eq(schema.albums.year, filter.year));
+      filterClause = sql`${filterClause} AND a.year = ${filter.year}`;
     }
     if (filter?.festivalId) {
-      conditions.push(eq(schema.albums.festivalId, filter.festivalId));
+      filterClause = sql`${filterClause} AND a.festival_id = ${filter.festivalId}`;
     }
 
-    const rows = await db
-      .select({
-        album: schema.albums,
-        festival: schema.festivals,
-        actualPhotoCount: sql<number>`(
-          SELECT count(*)::int FROM ${schema.images}
-          WHERE ${schema.images.albumId} = ${schema.albums.id}
-          AND ${schema.images.status} != 'trashed'
-          AND ${schema.images.deletedAt} IS NULL
-        )`,
-        actualVideoCount: sql<number>`(
-          SELECT count(*)::int FROM ${schema.videos}
-          WHERE ${schema.videos.albumId} = ${schema.albums.id}
-          AND ${schema.videos.status} != 'trashed'
-          AND ${schema.videos.deletedAt} IS NULL
-        )`,
-        firstImageUrl: sql<string | null>`(
-          SELECT COALESCE(${schema.images.thumbnailUrl}, ${schema.images.url}) FROM ${schema.images}
-          WHERE ${schema.images.albumId} = ${schema.albums.id}
-          AND ${schema.images.status} != 'trashed'
-          AND ${schema.images.deletedAt} IS NULL
-          ORDER BY ${schema.images.createdAt} ASC
-          LIMIT 1
-        )`,
-      })
-      .from(schema.albums)
-      .innerJoin(schema.festivals, eq(schema.albums.festivalId, schema.festivals.id))
-      .where(and(...conditions))
-      .orderBy(desc(schema.albums.year), asc(schema.festivals.createdAt));
+    const res = await db.execute(sql`
+      SELECT 
+        a.id,
+        a.festival_id,
+        a.year,
+        a.location,
+        a.title,
+        a.description,
+        a.cover_image,
+        a.photo_count,
+        a.views_count,
+        a.likes_count,
+        a.status,
+        f.id as fest_id,
+        f.name as fest_name,
+        f.emoji as fest_emoji,
+        f.accent as fest_accent,
+        f.month as fest_month,
+        f.cover_url as fest_cover_url,
+        COALESCE(pc.photo_count, 0)::int as actual_photo_count,
+        COALESCE(vc.video_count, 0)::int as actual_video_count,
+        fi.first_image_url
+      FROM albums a
+      INNER JOIN festivals f ON a.festival_id = f.id
+      LEFT JOIN (
+        SELECT album_id, count(*)::int as photo_count
+        FROM images
+        WHERE status != 'trashed' AND deleted_at IS NULL
+        GROUP BY album_id
+      ) pc ON pc.album_id = a.id
+      LEFT JOIN (
+        SELECT album_id, count(*)::int as video_count
+        FROM videos
+        WHERE status != 'trashed' AND deleted_at IS NULL
+        GROUP BY album_id
+      ) vc ON vc.album_id = a.id
+      LEFT JOIN (
+        SELECT DISTINCT ON (album_id)
+          album_id,
+          COALESCE(thumbnail_url, url) as first_image_url
+        FROM images
+        WHERE status != 'trashed' AND deleted_at IS NULL
+        ORDER BY album_id, created_at ASC, id ASC
+      ) fi ON fi.album_id = a.id
+      WHERE ${filterClause}
+      ORDER BY a.year DESC, f.created_at ASC, a.id ASC;
+    `);
 
-    if (!rows || rows.length === 0) {
+    const rows = (res.rows || []) as any[];
+    if (rows.length === 0) {
       return [];
     }
 
-    let mapped: DbAlbum[] = rows.map(({ album, festival, actualPhotoCount, actualVideoCount, firstImageUrl }) => {
+    let mapped: DbAlbum[] = rows.map((row) => {
       const festObj: Festival = {
-        id: festival.id,
-        name: festival.name,
-        emoji: festival.emoji,
-        accent: festival.accent,
-        month: festival.month,
-        cover: festival.coverUrl || `/assets/fest-${festival.id}.jpg`,
+        id: row.fest_id,
+        name: row.fest_name,
+        emoji: row.fest_emoji,
+        accent: row.fest_accent,
+        month: row.fest_month,
+        cover: row.fest_cover_url || `/assets/fest-${row.fest_id}.jpg`,
       };
 
       const realCount =
-        actualPhotoCount !== undefined && actualPhotoCount !== null
-          ? Number(actualPhotoCount)
-          : album.photoCount || 0;
+        row.actual_photo_count !== undefined && row.actual_photo_count !== null
+          ? Number(row.actual_photo_count)
+          : row.photo_count || 0;
 
       const realVideoCount =
-        actualVideoCount !== undefined && actualVideoCount !== null
-          ? Number(actualVideoCount)
+        row.actual_video_count !== undefined && row.actual_video_count !== null
+          ? Number(row.actual_video_count)
           : 0;
 
       return {
-        id: album.id,
-        festivalId: album.festivalId,
+        id: row.id,
+        festivalId: row.festival_id,
         festival: festObj,
-        year: album.year,
-        location: album.location,
+        year: row.year,
+        location: row.location,
         photoCount: realCount,
         videoCount: realVideoCount,
-        title: album.title,
-        description: album.description,
-        coverImage: album.coverImage || firstImageUrl || festObj.cover,
-        viewsCount: album.viewsCount,
-        likesCount: album.likesCount,
-        status: album.status,
+        title: row.title,
+        description: row.description,
+        coverImage: row.cover_image || row.first_image_url || festObj.cover,
+        viewsCount: row.views_count,
+        likesCount: row.likes_count,
+        status: row.status,
       };
     });
 
