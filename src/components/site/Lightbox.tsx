@@ -51,7 +51,7 @@ export function Lightbox({
     }
   }, [index, photos]);
 
-  // Preload adjacent images (both thumbnail and full original)
+  // Preload adjacent images (thumbnails only to conserve bandwidth for active original)
   useEffect(() => {
     if (index === null || photos.length <= 1) return;
 
@@ -61,23 +61,17 @@ export function Lightbox({
     const nextPhoto = photos[nextIndex];
     const prevPhoto = photos[prevIndex];
 
-    const preload = (url?: string | null, isOriginal = false) => {
+    const preload = (url?: string | null) => {
       if (!url) return;
-      if (isOriginal && loadedOriginalsRef.current.has(url)) return;
       const img = new Image();
-      if (isOriginal) {
-        img.onload = () => loadedOriginalsRef.current.add(url);
-      }
       img.src = url;
     };
 
     if (nextPhoto) {
       preload(nextPhoto.thumbnailUrl);
-      preload(nextPhoto.src, true);
     }
     if (prevPhoto && prevIndex !== nextIndex) {
       preload(prevPhoto.thumbnailUrl);
-      preload(prevPhoto.src, true);
     }
   }, [index, photos]);
 
