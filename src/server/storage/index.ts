@@ -8,6 +8,8 @@ export interface StoredImageResult {
   filename: string;
   size: number;
   mimeType: string;
+  thumbnailUrl?: string | undefined;
+  thumbnailFilename?: string | undefined;
 }
 
 export interface StoredVideoResult {

@@ -228,7 +228,7 @@ function AlbumDetail() {
                       className="block w-full overflow-hidden text-left cursor-pointer"
                     >
                       <img
-                        src={p.src}
+                        src={resolveImageUrl(p.thumbnailUrl || p.src, album.festivalId)}
                         alt={p.caption}
                         loading="lazy"
                         className="w-full h-auto block object-contain transition-transform duration-500 group-hover:scale-105"

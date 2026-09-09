@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import type { StorageProvider, StoredImageResult, StoredVideoResult } from "./index";
+import { createImageThumbnail } from "./thumbnail";
 
 function getExtensionFromMime(mime: string): string {
   const mimeMap: Record<string, string> = {
@@ -51,12 +52,33 @@ export class LocalStorageProvider implements StorageProvider {
     }
 
     await fs.promises.writeFile(destinationPath, params.buffer);
+    const url = `${this.publicPrefix}/${filename}`;
+
+    let thumbnailUrl = url;
+    let thumbnailFilename = filename;
+
+    try {
+      const thumbsDir = path.join(this.uploadDir, "thumbs");
+      if (!fs.existsSync(thumbsDir)) {
+        await fs.promises.mkdir(thumbsDir, { recursive: true });
+      }
+      const thumb = await createImageThumbnail(params.buffer);
+      const thumbFilename = `${crypto.randomUUID()}${thumb.ext}`;
+      const thumbDestPath = path.join(thumbsDir, thumbFilename);
+      await fs.promises.writeFile(thumbDestPath, thumb.buffer);
+      thumbnailUrl = `${this.publicPrefix}/thumbs/${thumbFilename}`;
+      thumbnailFilename = `thumbs/${thumbFilename}`;
+    } catch (thumbErr) {
+      console.warn("[LocalStorage] Failed to create thumbnail, falling back to original:", thumbErr);
+    }
 
     return {
-      url: `${this.publicPrefix}/${filename}`,
+      url,
       filename,
       size: params.buffer.length,
       mimeType: params.mimeType,
+      thumbnailUrl,
+      thumbnailFilename,
     };
   }
 

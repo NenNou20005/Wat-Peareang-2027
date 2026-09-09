@@ -1535,7 +1535,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
           title: title.trim() || file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " "),
           description: undefined,
           url: stored.url,
-          thumbnailUrl: stored.url,
+          thumbnailUrl: stored.thumbnailUrl || stored.url,
           size: stored.size,
           mimeType: stored.mimeType,
           photographer: photographer.trim() || "វត្តពារាំង",

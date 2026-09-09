@@ -15,6 +15,7 @@ import type {
   StoredVideoResult,
   StorageObjectStream,
 } from "./index";
+import { createImageThumbnail } from "./thumbnail";
 
 function getExtensionFromMime(mime: string): string {
   const mimeMap: Record<string, string> = {
@@ -132,11 +133,43 @@ export class R2StorageProvider implements StorageProvider {
       const url = this.getPublicUrl(uniqueKey);
       console.log(`[Storage/R2]: Upload success! URL="${url}"`);
 
+      let thumbnailUrl = url;
+      let thumbnailFilename = uniqueKey;
+
+      try {
+        const thumb = await createImageThumbnail(params.buffer);
+        const thumbKey = `uploads/thumbs/${Date.now()}-${crypto.randomBytes(6).toString("hex")}${thumb.ext}`;
+        await client.send(
+          new PutObjectCommand({
+            Bucket: this.bucketName,
+            Key: thumbKey,
+            Body: thumb.buffer,
+            ContentType: thumb.mimeType,
+            Metadata: {
+              originalKey: uniqueKey,
+              isThumbnail: "true",
+            },
+          }),
+        );
+        thumbnailUrl = this.getPublicUrl(thumbKey);
+        thumbnailFilename = thumbKey;
+        console.log(
+          `[Storage/R2]: Thumbnail created! Key="${thumbKey}", Size=${thumb.buffer.length}B, URL="${thumbnailUrl}"`,
+        );
+      } catch (thumbErr) {
+        console.warn(
+          `[Storage/R2]: Failed to generate/upload thumbnail, falling back to original:`,
+          thumbErr,
+        );
+      }
+
       return {
         url,
         filename: uniqueKey,
         size: params.buffer.length,
         mimeType: params.mimeType,
+        thumbnailUrl,
+        thumbnailFilename,
       };
     } catch (err) {
       console.error(
