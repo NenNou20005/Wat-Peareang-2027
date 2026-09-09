@@ -164,6 +164,7 @@ export function HomeSlideshow() {
     return albumImages.map((img) => ({
       id: img.id,
       src: resolveImageUrl(img.url || img.thumbnailUrl),
+      thumbnailUrl: resolveImageUrl(img.thumbnailUrl || img.url),
       caption: `${img.title || currentAlbum?.title || "រូបភាពបណ្ណសារវត្តពារាំង"}${currentAlbum?.year ? ` — ឆ្នាំ ${toKhmerNumber(currentAlbum.year)}` : ""}${currentAlbum?.festivalName ? ` (${currentAlbum.festivalName})` : ""}`,
     }));
   }, [albumImages, currentAlbum]);

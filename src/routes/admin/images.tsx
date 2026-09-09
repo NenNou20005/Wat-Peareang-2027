@@ -154,6 +154,7 @@ function AdminImagesPage() {
     return images.map((img) => ({
       id: img.id,
       src: resolveImageUrl(img.url),
+      thumbnailUrl: resolveImageUrl(img.thumbnailUrl || img.url),
       caption: `${img.title} (${img.albumTitle || img.albumId})`,
     }));
   }, [images]);

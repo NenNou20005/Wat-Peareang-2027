@@ -36,15 +36,19 @@ export function useYears() {
   });
 }
 
-export function useAlbums(filters?: {
-  year?: number | undefined;
-  festivalId?: string | undefined;
-  search?: string | undefined;
-}) {
+export function useAlbums(
+  filters?: {
+    year?: number | undefined;
+    festivalId?: string | undefined;
+    search?: string | undefined;
+  },
+  options?: { enabled?: boolean },
+) {
   return useQuery<Album[]>({
     queryKey: ["archive", "albums", filters?.year, filters?.festivalId, filters?.search],
     queryFn: () => fetchAlbums(filters),
     staleTime: 1000 * 60 * 5,
+    enabled: options?.enabled ?? true,
   });
 }
 

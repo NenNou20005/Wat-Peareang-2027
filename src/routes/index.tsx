@@ -144,7 +144,7 @@ function Index() {
       {/* Albums grouped by year */}
       <div className="mx-auto mt-12 max-w-[1400px] space-y-16 px-4 lg:px-8">
         {shownYears.map((y) => (
-          <YearSection key={y} year={y} festivalFilter={selected} />
+          <YearSection key={y} year={y} festivalFilter={selected} albums={allAlbums} />
         ))}
       </div>
 

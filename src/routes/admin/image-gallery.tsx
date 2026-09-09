@@ -101,6 +101,7 @@ function AdminImageGalleryPage() {
     return albumPhotos.map((p) => ({
       id: p.id,
       src: resolveImageUrl(p.src),
+      thumbnailUrl: resolveImageUrl(p.thumbnailUrl || p.src),
       caption: p.caption || activeAlbum?.title || "រូបភាពបណ្ណសារវត្តពារាំង",
     }));
   }, [albumPhotos, activeAlbum]);

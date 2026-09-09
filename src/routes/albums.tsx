@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { YearPills, FestivalPills } from "@/components/site/FilterBar";
 import { YearSection } from "@/components/site/YearSection";
-import { useYears } from "@/hooks/useArchiveData";
+import { useYears, useAlbums } from "@/hooks/useArchiveData";
 
 export const Route = createFileRoute("/albums")({
   head: () => ({
@@ -24,6 +24,7 @@ export const Route = createFileRoute("/albums")({
 
 function AlbumsPage() {
   const { data: years = [] } = useYears();
+  const { data: allAlbums = [] } = useAlbums();
   const [year, setYear] = useState<number | "all">("all");
   const [selected, setSelected] = useState<string[]>([]);
   const shownYears = year === "all" ? years : [year];
@@ -51,7 +52,7 @@ function AlbumsPage() {
 
       <div className="mt-12 space-y-16">
         {shownYears.map((y) => (
-          <YearSection key={y} year={y} festivalFilter={selected} />
+          <YearSection key={y} year={y} festivalFilter={selected} albums={allAlbums} />
         ))}
       </div>
     </div>

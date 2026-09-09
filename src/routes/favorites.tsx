@@ -10,6 +10,7 @@ import { LikeButton } from "@/components/site/LikeButton";
 import { FavoriteButton } from "@/components/site/FavoriteButton";
 import { Bookmark, Images, Image as ImageIcon, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { resolveImageUrl } from "@/lib/asset-resolver";
 
 export const Route = createFileRoute("/favorites")({
   head: () => ({
@@ -73,7 +74,8 @@ function FavoritesPage() {
 
   const lightboxPhotos: LightboxPhoto[] = displayImages.map((img) => ({
     id: img.id,
-    src: img.url,
+    src: resolveImageUrl(img.url),
+    thumbnailUrl: resolveImageUrl(img.thumbnailUrl || img.url),
     caption: `${img.title} (${img.albumTitle || img.festivalName || ""})`,
   }));
 

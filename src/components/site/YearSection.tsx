@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import { toKhmerNumber, type Album } from "@/data/archive";
 import { AlbumCard } from "@/components/site/AlbumCard";
-import { useAlbums, useArchiveStats } from "@/hooks/useArchiveData";
+import { useAlbums } from "@/hooks/useArchiveData";
 
 export function YearSectionHeader({
   year,
@@ -11,9 +11,7 @@ export function YearSectionHeader({
   year: number;
   dynamicStats?: { albums: number; photos: number; locations: number };
 }) {
-  const { data: archiveStats } = useArchiveStats(year);
-  const stats = dynamicStats ??
-    archiveStats?.yearStatsMap[year] ?? { albums: 0, photos: 0, locations: 1 };
+  const stats = dynamicStats ?? { albums: 0, photos: 0, locations: 1 };
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-4 sm:flex sm:items-end sm:justify-between">
@@ -59,10 +57,19 @@ export function AlbumGrid({
   );
 }
 
-export function YearSection({ year, festivalFilter }: { year: number; festivalFilter?: string[] }) {
-  const { data: yearAlbums = [] } = useAlbums({ year });
-  const items = yearAlbums.filter(
-    (a) => !festivalFilter?.length || festivalFilter.includes(a.festivalId),
+export function YearSection({
+  year,
+  festivalFilter,
+  albums,
+}: {
+  year: number;
+  festivalFilter?: string[];
+  albums?: Album[];
+}) {
+  const { data: defaultAlbums = [] } = useAlbums(undefined, { enabled: !albums });
+  const sourceAlbums = albums ?? defaultAlbums;
+  const items = sourceAlbums.filter(
+    (a) => a.year === year && (!festivalFilter?.length || festivalFilter.includes(a.festivalId)),
   );
 
   if (items.length === 0) return null;

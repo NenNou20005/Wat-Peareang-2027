@@ -3,7 +3,7 @@ import { useState } from "react";
 import { YearSection } from "@/components/site/YearSection";
 import { toKhmerNumber } from "@/data/archive";
 import { cn } from "@/lib/utils";
-import { useYears, useArchiveStats } from "@/hooks/useArchiveData";
+import { useYears, useArchiveStats, useAlbums } from "@/hooks/useArchiveData";
 
 export const Route = createFileRoute("/years")({
   head: () => ({
@@ -26,6 +26,7 @@ export const Route = createFileRoute("/years")({
 function YearsPage() {
   const { data: years = [] } = useYears();
   const { data: archiveStats } = useArchiveStats();
+  const { data: allAlbums = [] } = useAlbums();
   const [active, setActive] = useState<number | null>(null);
   const currentActive = active ?? years[0];
 
@@ -68,7 +69,7 @@ function YearsPage() {
 
         <div className="space-y-16">
           {years.map((y) => (
-            <YearSection key={y} year={y} />
+            <YearSection key={y} year={y} albums={allAlbums} />
           ))}
         </div>
       </div>
