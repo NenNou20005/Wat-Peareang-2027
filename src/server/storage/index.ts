@@ -41,6 +41,12 @@ export interface StorageProvider {
     contentType: string;
     contentLength: number;
   } | null>;
+  saveThumbnail?(params: {
+    buffer: Buffer;
+    mimeType: string;
+    ext: string;
+    originalKey?: string;
+  }): Promise<{ url: string; key: string } | null>;
   getObjectStream?(key: string, range?: string): Promise<StorageObjectStream | null>;
   savePrivateImage?(params: {
     buffer: Buffer;

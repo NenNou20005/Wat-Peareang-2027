@@ -182,6 +182,35 @@ export class R2StorageProvider implements StorageProvider {
     }
   }
 
+  public async saveThumbnail(params: {
+    buffer: Buffer;
+    mimeType: string;
+    ext: string;
+    originalKey?: string;
+  }): Promise<{ url: string; key: string } | null> {
+    try {
+      const client = this.getClient();
+      const thumbKey = `uploads/thumbs/${Date.now()}-${crypto.randomBytes(6).toString("hex")}${params.ext}`;
+      await client.send(
+        new PutObjectCommand({
+          Bucket: this.bucketName,
+          Key: thumbKey,
+          Body: params.buffer,
+          ContentType: params.mimeType,
+          Metadata: {
+            originalKey: params.originalKey || "",
+            isThumbnail: "true",
+          },
+        }),
+      );
+      const url = this.getPublicUrl(thumbKey);
+      return { url, key: thumbKey };
+    } catch (err) {
+      console.error("[Storage/R2]: Failed to save thumbnail:", err);
+      return null;
+    }
+  }
+
   public async savePrivateImage(params: {
     buffer: Buffer;
     originalFilename: string;

@@ -82,6 +82,30 @@ export class LocalStorageProvider implements StorageProvider {
     };
   }
 
+  public async saveThumbnail(params: {
+    buffer: Buffer;
+    mimeType: string;
+    ext: string;
+    originalKey?: string;
+  }): Promise<{ url: string; key: string } | null> {
+    try {
+      const thumbsDir = path.join(this.uploadDir, "thumbs");
+      if (!fs.existsSync(thumbsDir)) {
+        await fs.promises.mkdir(thumbsDir, { recursive: true });
+      }
+      const thumbFilename = `${crypto.randomUUID()}${params.ext}`;
+      const thumbDestPath = path.join(thumbsDir, thumbFilename);
+      await fs.promises.writeFile(thumbDestPath, params.buffer);
+      return {
+        url: `${this.publicPrefix}/thumbs/${thumbFilename}`,
+        key: `thumbs/${thumbFilename}`,
+      };
+    } catch (err) {
+      console.error("[LocalStorage]: Failed to save thumbnail:", err);
+      return null;
+    }
+  }
+
   public async deleteImage(urlOrPath: string): Promise<boolean> {
     try {
       const cleanPath = urlOrPath.replace(/^\/+/, "").replace(/\\/g, "/");

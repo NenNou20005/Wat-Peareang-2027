@@ -715,6 +715,67 @@ export function useUploadImage() {
   });
 }
 
+export interface BackfillThumbnailsParams {
+  albumId?: string | undefined;
+  limit?: number | undefined;
+  dryRun?: boolean | undefined;
+  delayMs?: number | undefined;
+}
+
+export interface BackfillThumbnailsResult {
+  success: boolean;
+  dryRun: boolean;
+  albumId: string;
+  batchLimit?: number;
+  candidateCount?: number;
+  remainingBefore?: number;
+  processed?: number;
+  failed?: number;
+  skipped?: number;
+  remaining?: number;
+  details?: Array<{
+    id: string;
+    albumId: string;
+    originalSizeKb?: number;
+    thumbSizeKb?: number;
+    thumbnailUrl?: string;
+    error?: string;
+  }>;
+  error?: string;
+}
+
+export function useBackfillThumbnails() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (params: BackfillThumbnailsParams): Promise<BackfillThumbnailsResult> => {
+      const res = await fetch("/api/admin/images/backfill-thumbnails", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed to backfill thumbnails");
+      return json;
+    },
+    onSuccess: async (_, variables) => {
+      if (!variables.dryRun) {
+        const invalidations = [
+          queryClient.invalidateQueries({ queryKey: ["admin", "images"] }),
+          queryClient.invalidateQueries({ queryKey: ["archive", "images"] }),
+          queryClient.invalidateQueries({ queryKey: ["archive", "albums"] }),
+        ];
+        if (variables.albumId && variables.albumId !== "all") {
+          invalidations.push(
+            queryClient.invalidateQueries({ queryKey: archiveKeys.albumPhotos(variables.albumId) }),
+            queryClient.invalidateQueries({ queryKey: archiveKeys.album(variables.albumId) }),
+          );
+        }
+        await Promise.all(invalidations);
+      }
+    },
+  });
+}
+
 export function useUpdateImage() {
   const queryClient = useQueryClient();
   return useMutation({

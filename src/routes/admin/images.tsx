@@ -12,6 +12,7 @@ import {
   X,
   RefreshCw,
   Eye,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +35,8 @@ import {
   useUpdateImage,
   useTrashImage,
   useCreateAlbum,
+  useBackfillThumbnails,
+  type BackfillThumbnailsResult,
   type AdminImage,
 } from "@/hooks/useAdminData";
 import { resolveImageUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
@@ -160,6 +163,14 @@ function AdminImagesPage() {
   const createAlbumMutation = useCreateAlbum();
   const updateImageMutation = useUpdateImage();
   const trashImageMutation = useTrashImage();
+  const backfillMutation = useBackfillThumbnails();
+
+  // Backfill modal state (Safe & Throttled)
+  const [isBackfillOpen, setIsBackfillOpen] = useState(false);
+  const [backfillAlbumId, setBackfillAlbumId] = useState<string>("all");
+  const [backfillLimit, setBackfillLimit] = useState<number>(20);
+  const [backfillDryRun, setBackfillDryRun] = useState<boolean>(true);
+  const [backfillResult, setBackfillResult] = useState<BackfillThumbnailsResult | null>(null);
 
   // Upload modal hierarchical state
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -502,14 +513,29 @@ function AdminImagesPage() {
             </p>
           </div>
 
-          {canUpload && (
-            <Button
-              onClick={openUploadModal}
-              className="rounded-full bg-gold font-medium text-primary-foreground hover:bg-gold/90 shadow-soft"
-            >
-              <Upload className="mr-1.5 h-4 w-4" /> + បង្ហោះរូបភាពថ្មី
-            </Button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {canEdit && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setBackfillAlbumId(selectedAlbum !== "all" ? selectedAlbum : "all");
+                  setBackfillResult(null);
+                  setIsBackfillOpen(true);
+                }}
+                className="rounded-full border-gold/40 text-gold hover:bg-gold/10 hover:text-gold shadow-soft text-xs"
+              >
+                <Sparkles className="mr-1.5 h-3.5 w-3.5 text-gold" /> បង្កើត Thumbnails (Backfill)
+              </Button>
+            )}
+            {canUpload && (
+              <Button
+                onClick={openUploadModal}
+                className="rounded-full bg-gold font-medium text-primary-foreground hover:bg-gold/90 shadow-soft"
+              >
+                <Upload className="mr-1.5 h-4 w-4" /> + បង្ហោះរូបភាពថ្មី
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Direct Filters: Search, Year, Festival, Album */}
@@ -1130,6 +1156,180 @@ function AdminImagesPage() {
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Backfill Thumbnails Dialog (Safe, Throttled & RBAC-Protected) */}
+        <Dialog open={isBackfillOpen} onOpenChange={setIsBackfillOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base font-bold">
+                <Sparkles className="h-5 w-5 text-gold" />
+                បង្កើត Thumbnails ដោយសុវត្ថិភាព (Backfill)
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4 py-2">
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                មុខងារនេះនឹងស្វែងរក និងបង្កើត WebP Thumbnail (ទទឹង 600px) សម្រាប់រូបភាពដើមក្នុង R2
+                ដែលមិនទាន់មាន Thumbnail ដោយមិនលុប ឬប៉ះពាល់ដល់រូបភាព Original ឡើយ។
+              </p>
+
+              {/* Target Album Selection */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Album គោលដៅ</Label>
+                <select
+                  value={backfillAlbumId}
+                  onChange={(e) => {
+                    setBackfillAlbumId(e.target.value);
+                    setBackfillResult(null);
+                  }}
+                  className="w-full rounded-2xl border border-border bg-card px-3 h-10 text-xs text-foreground shadow-sm"
+                >
+                  <option value="all">🖼️ គ្រប់ Albums ទាំងអស់</option>
+                  {albums.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.title} ({a.year})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Batch Limit (Capped to max 20) */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">ចំនួនរូបភាពក្នុងមួយលើក (អតិបរមា ២០)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={backfillLimit}
+                  onChange={(e) =>
+                    setBackfillLimit(Math.min(20, Math.max(1, Number(e.target.value) || 1)))
+                  }
+                  className="rounded-2xl h-10 text-xs"
+                />
+              </div>
+
+              {/* Dry Run Toggle */}
+              <label className="flex items-center gap-2 p-3 rounded-2xl border border-border bg-muted/30 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={backfillDryRun}
+                  onChange={(e) => setBackfillDryRun(e.target.checked)}
+                  className="rounded border-border text-gold focus:ring-gold h-4 w-4"
+                />
+                <div className="text-xs">
+                  <span className="font-semibold block">Dry-run (ពិនិត្យមើលជាមុន)</span>
+                  <span className="text-muted-foreground text-[11px]">
+                    គ្រាន់តែពិនិត្យចំនួនរូបដែលត្រូវការ thumbnail ដោយមិនទាន់កែប្រែទិន្នន័យ
+                  </span>
+                </div>
+              </label>
+
+              {/* Result Summary */}
+              {backfillResult && (
+                <div className="p-3 rounded-2xl border border-border bg-muted/40 text-xs space-y-1.5">
+                  <div className="font-semibold flex items-center justify-between">
+                    <span>លទ្ធផល:</span>
+                    <span className={backfillResult.dryRun ? "text-blue-500" : "text-emerald-500"}>
+                      {backfillResult.dryRun ? "🔍 បានសាកល្បង (Dry-run)" : "✅ បានដំណើរការរួចរាល់"}
+                    </span>
+                  </div>
+                  {backfillResult.dryRun ? (
+                    <div className="text-muted-foreground space-y-1">
+                      <p>
+                        • រកឃើញរូបត្រូវការ Thumbnail:{" "}
+                        <strong className="text-foreground">
+                          {backfillResult.candidateCount ?? 0}
+                        </strong>{" "}
+                        សន្លឹក
+                      </p>
+                      <p>
+                        • សរុបរូបដែលនៅសល់ក្នុង Album នេះ:{" "}
+                        <strong className="text-foreground">
+                          {backfillResult.remainingBefore ?? 0}
+                        </strong>{" "}
+                        សន្លឹក
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="text-muted-foreground space-y-1">
+                      <p>
+                        • បង្កើតជោគជ័យ:{" "}
+                        <strong className="text-emerald-600">
+                          {backfillResult.processed ?? 0}
+                        </strong>{" "}
+                        សន្លឹក
+                      </p>
+                      {Boolean(backfillResult.failed) && (
+                        <p>
+                          • បរាជ័យ:{" "}
+                          <strong className="text-rose-500">{backfillResult.failed}</strong>{" "}
+                          សន្លឹក
+                        </p>
+                      )}
+                      <p>
+                        • នៅសល់មិនទាន់មាន Thumbnail:{" "}
+                        <strong className="text-amber-600">
+                          {backfillResult.remaining ?? 0}
+                        </strong>{" "}
+                        សន្លឹក
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <DialogFooter className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setIsBackfillOpen(false);
+                  setBackfillResult(null);
+                }}
+                className="rounded-full text-xs"
+              >
+                បិទ
+              </Button>
+              <Button
+                type="button"
+                disabled={backfillMutation.isPending}
+                onClick={async () => {
+                  try {
+                    const res = await backfillMutation.mutateAsync({
+                      albumId: backfillAlbumId === "all" ? undefined : backfillAlbumId,
+                      limit: backfillLimit,
+                      dryRun: backfillDryRun,
+                      delayMs: 200,
+                    });
+                    setBackfillResult(res);
+                    if (res.dryRun) {
+                      toast.info(`Dry-run: រកឃើញ ${res.candidateCount} រូបភាពដែលត្រូវការ Thumbnail`);
+                    } else {
+                      toast.success(
+                        `បានបង្កើត Thumbnail ${res.processed} សន្លឹកដោយជោគជ័យ! (នៅសល់ ${res.remaining} សន្លឹក)`,
+                      );
+                    }
+                  } catch (err: unknown) {
+                    const msg = err instanceof Error ? err.message : "កំហុសដំណើរការ Backfill";
+                    toast.error(msg);
+                  }
+                }}
+                className={`rounded-full text-xs font-semibold ${
+                  backfillDryRun
+                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                    : "bg-gold text-primary-foreground hover:bg-gold/90"
+                }`}
+              >
+                {backfillMutation.isPending
+                  ? "កំពុងដំណើរការ..."
+                  : backfillDryRun
+                    ? "🔍 ពិនិត្យមើល (Dry-run)"
+                    : "⚡ ចាប់ផ្តើម Backfill"}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 

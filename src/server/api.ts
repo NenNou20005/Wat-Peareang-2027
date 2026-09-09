@@ -4,9 +4,10 @@ import path from "node:path";
 import { db, verifyPassword, hashPassword } from "./db";
 import { checkDbHealth, getDrizzleDb, isPostgresConfigured } from "../db/index";
 import * as schema from "../db/schema";
-import { eq, asc, desc, sql, and } from "drizzle-orm";
+import { eq, asc, desc, sql, and, or, isNull } from "drizzle-orm";
 import { getOrGenerateRequestId, logger } from "./logger";
 import { getStorageProvider, R2StorageProvider } from "./storage/index";
+import { createImageThumbnail } from "./storage/thumbnail";
 import { detectImageMagicBytes, detectVideoMagicBytes, LIMITS, sanitizeText } from "./validation";
 import {
   getPostgresFestivals,
@@ -1633,6 +1634,204 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
       } catch (err) {
         logger.error("Unexpected error during image upload", { error: err });
         const errMsg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងដំណើរការ Upload រូបភាព។";
+        return json({ success: false, error: errMsg }, 500);
+      }
+    }
+
+    // POST /api/admin/images/backfill-thumbnails (Safe, Throttled & RBAC-Guarded Thumbnail Generation)
+    if (pathname === "/api/admin/images/backfill-thumbnails" && method === "POST") {
+      const auth = await requireAuth(request, "edit_images");
+      if (auth instanceof Response) return auth;
+
+      const drizzle = getDrizzleDb();
+      if (!drizzle) return json({ success: false, error: "Database unavailable" }, 503);
+
+      try {
+        let body: {
+          albumId?: string;
+          limit?: number;
+          dryRun?: boolean;
+          delayMs?: number;
+        } = {};
+        try {
+          body = (await request.json()) || {};
+        } catch {
+          body = {};
+        }
+
+        const targetAlbumId =
+          typeof body.albumId === "string" && body.albumId.trim() !== "" && body.albumId.trim() !== "all"
+            ? body.albumId.trim()
+            : null;
+
+        // Strict batch limit: max 20 images per request (Requirement 11)
+        const safeLimit = Math.min(Math.max(1, Number(body.limit) || 10), 20);
+        const isDryRun = Boolean(body.dryRun);
+        const delayMs = Math.min(Math.max(100, Number(body.delayMs) || 200), 2000);
+
+        // Conditions: Missing thumbnail or identical to original (Requirement 2)
+        const conditions = [
+          or(isNull(schema.images.thumbnailUrl), eq(schema.images.thumbnailUrl, schema.images.url)),
+          sql`${schema.images.deletedAt} IS NULL`,
+          sql`${schema.images.url} NOT LIKE '/assets/%'`,
+        ];
+
+        if (targetAlbumId) {
+          conditions.push(eq(schema.images.albumId, targetAlbumId));
+        }
+
+        // 1. Count remaining images needing thumbnails
+        const [remainingCountRes] = await drizzle
+          .select({ count: sql<number>`count(*)::int` })
+          .from(schema.images)
+          .where(and(...conditions));
+        const totalRemaining = Number(remainingCountRes?.count ?? 0);
+
+        // 2. Select candidates up to safeLimit
+        const candidateImages = await drizzle
+          .select({
+            id: schema.images.id,
+            albumId: schema.images.albumId,
+            url: schema.images.url,
+            thumbnailUrl: schema.images.thumbnailUrl,
+            title: schema.images.title,
+          })
+          .from(schema.images)
+          .where(and(...conditions))
+          .limit(safeLimit);
+
+        // 3. Dry-run early return (Requirement 12)
+        if (isDryRun) {
+          return json({
+            success: true,
+            dryRun: true,
+            albumId: targetAlbumId || "all",
+            batchLimit: safeLimit,
+            candidateCount: candidateImages.length,
+            remainingBefore: totalRemaining,
+            candidates: candidateImages.map((img) => ({
+              id: img.id,
+              albumId: img.albumId,
+              url: img.url,
+            })),
+          });
+        }
+
+        // 4. Live execution: process thumbnails with safety guarantees
+        const storage = getStorageProvider();
+        let processedCount = 0;
+        let failedCount = 0;
+        const details: Array<{
+          id: string;
+          albumId: string;
+          originalSizeKb?: number;
+          thumbSizeKb?: number;
+          thumbnailUrl?: string;
+          error?: string;
+        }> = [];
+
+        for (let i = 0; i < candidateImages.length; i++) {
+          const img = candidateImages[i]!;
+
+          // Clean key extraction (handles /api/storage/r2/... or plain keys)
+          const key = img.url.replace(/^.*\/api\/storage\/r2\//, "").replace(/^\/+/, "");
+
+          // Read original buffer without deleting or modifying original (Requirement 5)
+          let originalBuffer: Buffer | null = null;
+          if (storage.getObject) {
+            try {
+              const obj = await storage.getObject(key);
+              if (obj && obj.body) {
+                originalBuffer = Buffer.from(obj.body);
+              }
+            } catch (readErr) {
+              logger.warn(`[Backfill] Failed reading original for image ${img.id}`, { error: readErr });
+            }
+          }
+
+          if (!originalBuffer || originalBuffer.length === 0) {
+            failedCount++;
+            details.push({
+              id: img.id,
+              albumId: img.albumId,
+              error: "Unable to read original image buffer from storage",
+            });
+            continue;
+          }
+
+          // Generate WebP thumbnail via sharp (Requirement 1, 3)
+          const thumb = await createImageThumbnail(originalBuffer, 600, 80);
+          if (!thumb.isOptimized) {
+            failedCount++;
+            details.push({
+              id: img.id,
+              albumId: img.albumId,
+              error: "Thumbnail optimization failed",
+            });
+            continue;
+          }
+
+          // Upload thumbnail to NEW R2 key (Requirement 4)
+          let savedThumb: { url: string; key: string } | null = null;
+          if (storage.saveThumbnail) {
+            savedThumb = await storage.saveThumbnail({
+              buffer: thumb.buffer,
+              mimeType: thumb.mimeType,
+              ext: thumb.ext,
+              originalKey: key,
+            });
+          }
+
+          if (!savedThumb || !savedThumb.url) {
+            failedCount++;
+            details.push({
+              id: img.id,
+              albumId: img.albumId,
+              error: "Failed to upload thumbnail to storage",
+            });
+            continue;
+          }
+
+          // Update ONLY images.thumbnailUrl and images.updatedAt in PostgreSQL (Requirement 6, 7)
+          await drizzle
+            .update(schema.images)
+            .set({
+              thumbnailUrl: savedThumb.url,
+              updatedAt: new Date(),
+            })
+            .where(eq(schema.images.id, img.id));
+
+          processedCount++;
+          details.push({
+            id: img.id,
+            albumId: img.albumId,
+            originalSizeKb: Math.round(originalBuffer.length / 1024),
+            thumbSizeKb: Math.round(thumb.buffer.length / 1024),
+            thumbnailUrl: savedThumb.url,
+          });
+
+          // Throttle delay between iterations
+          if (i < candidateImages.length - 1 && delayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
+        }
+
+        const remainingAfter = Math.max(0, totalRemaining - processedCount);
+
+        return json({
+          success: true,
+          dryRun: false,
+          albumId: targetAlbumId || "all",
+          batchLimit: safeLimit,
+          processed: processedCount,
+          failed: failedCount,
+          skipped: candidateImages.length - processedCount - failedCount,
+          remaining: remainingAfter,
+          details,
+        });
+      } catch (err) {
+        logger.error("Error in backfill-thumbnails endpoint", { error: err });
+        const errMsg = err instanceof Error ? err.message : "Backfill execution error";
         return json({ success: false, error: errMsg }, 500);
       }
     }
