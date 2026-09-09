@@ -24,6 +24,30 @@ function getVideoExtensionFromMime(mime: string): string {
   return videoMimeMap[mime.toLowerCase()] || ".mp4";
 }
 
+function sanitizeAlbumId(albumId?: string): string | undefined {
+  if (!albumId) return undefined;
+  const trimmed = albumId.trim();
+  // Strip slashes, backslashes, path traversal sequences, and control chars
+  // Retain alphanumeric, hyphens, underscores, and Khmer Unicode characters
+  const clean = trimmed
+    .replace(/[\\/\s]+/g, "-")
+    .replace(/[^a-zA-Z0-9_\u1780-\u17FF-]/g, "")
+    .replace(/^-+|-+$/g, "");
+  if (!clean || clean === "." || clean === "..") return undefined;
+  return clean;
+}
+
+function isPathInside(childPath: string, parentDir: string): boolean {
+  const resolvedParent = path.resolve(parentDir);
+  const resolvedChild = path.resolve(childPath);
+  const parentWithSep = resolvedParent.endsWith(path.sep) ? resolvedParent : resolvedParent + path.sep;
+  if (!resolvedChild.startsWith(parentWithSep)) {
+    return false;
+  }
+  const relative = path.relative(resolvedParent, resolvedChild);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
 export class LocalStorageProvider implements StorageProvider {
   private uploadDir: string;
   private publicPrefix: string;
@@ -41,40 +65,75 @@ export class LocalStorageProvider implements StorageProvider {
     buffer: Buffer;
     originalFilename: string;
     mimeType: string;
+    albumId?: string;
   }): Promise<StoredImageResult> {
     const ext = getExtensionFromMime(params.mimeType);
-    const filename = `${crypto.randomUUID()}${ext}`;
-    const destinationPath = path.join(this.uploadDir, filename);
+    const cleanAlbumId = sanitizeAlbumId(params.albumId);
+    const fileId = crypto.randomUUID();
 
-    // Prevent path traversal
-    if (!destinationPath.startsWith(this.uploadDir)) {
+    let targetDir = this.uploadDir;
+    let filename = `${fileId}${ext}`;
+    let relPath = filename;
+
+    if (cleanAlbumId) {
+      targetDir = path.resolve(this.uploadDir, "albums", cleanAlbumId, "originals");
+      relPath = `albums/${cleanAlbumId}/originals/${filename}`;
+    }
+
+    // Strict containment check BEFORE any filesystem directory creation or writes
+    if (cleanAlbumId && !isPathInside(targetDir, this.uploadDir)) {
+      throw new Error("Invalid target directory: path traversal detected.");
+    }
+
+    const destinationPath = path.resolve(targetDir, filename);
+    if (!isPathInside(destinationPath, this.uploadDir)) {
       throw new Error("Invalid storage destination path.");
     }
 
+    if (!fs.existsSync(targetDir)) {
+      await fs.promises.mkdir(targetDir, { recursive: true });
+    }
+
     await fs.promises.writeFile(destinationPath, params.buffer);
-    const url = `${this.publicPrefix}/${filename}`;
+    const url = `${this.publicPrefix}/${relPath}`;
 
     let thumbnailUrl = url;
-    let thumbnailFilename = filename;
+    let thumbnailFilename = relPath;
 
     try {
-      const thumbsDir = path.join(this.uploadDir, "thumbs");
+      let thumbsDir = path.resolve(this.uploadDir, "thumbs");
+      const thumb = await createImageThumbnail(params.buffer);
+      const thumbFilename = cleanAlbumId ? `${fileId}-thumb${thumb.ext}` : `${crypto.randomUUID()}${thumb.ext}`;
+      let thumbRelPath = `thumbs/${thumbFilename}`;
+
+      if (cleanAlbumId) {
+        thumbsDir = path.resolve(this.uploadDir, "albums", cleanAlbumId, "thumbs");
+        thumbRelPath = `albums/${cleanAlbumId}/thumbs/${thumbFilename}`;
+      }
+
+      if (!isPathInside(thumbsDir, this.uploadDir)) {
+        throw new Error("Invalid thumbnail directory: path traversal detected.");
+      }
+
+      const thumbDestPath = path.resolve(thumbsDir, thumbFilename);
+      if (!isPathInside(thumbDestPath, this.uploadDir)) {
+        throw new Error("Invalid thumbnail destination path.");
+      }
+
       if (!fs.existsSync(thumbsDir)) {
         await fs.promises.mkdir(thumbsDir, { recursive: true });
       }
-      const thumb = await createImageThumbnail(params.buffer);
-      const thumbFilename = `${crypto.randomUUID()}${thumb.ext}`;
-      const thumbDestPath = path.join(thumbsDir, thumbFilename);
+
       await fs.promises.writeFile(thumbDestPath, thumb.buffer);
-      thumbnailUrl = `${this.publicPrefix}/thumbs/${thumbFilename}`;
-      thumbnailFilename = `thumbs/${thumbFilename}`;
+      thumbnailUrl = `${this.publicPrefix}/${thumbRelPath}`;
+      thumbnailFilename = thumbRelPath;
     } catch (thumbErr) {
       console.warn("[LocalStorage] Failed to create thumbnail, falling back to original:", thumbErr);
     }
 
     return {
       url,
-      filename,
+      filename: relPath,
       size: params.buffer.length,
       mimeType: params.mimeType,
       thumbnailUrl,
@@ -87,18 +146,41 @@ export class LocalStorageProvider implements StorageProvider {
     mimeType: string;
     ext: string;
     originalKey?: string;
+    albumId?: string;
   }): Promise<{ url: string; key: string } | null> {
     try {
-      const thumbsDir = path.join(this.uploadDir, "thumbs");
+      const rawAlbumId =
+        params.albumId ||
+        (params.originalKey?.match(/^albums\/([^/]+)\//)?.[1] ?? undefined);
+      const cleanAlbumId = sanitizeAlbumId(rawAlbumId);
+      const fileId = crypto.randomUUID();
+
+      let thumbsDir = path.resolve(this.uploadDir, "thumbs");
+      const thumbFilename = cleanAlbumId ? `${fileId}-thumb${params.ext}` : `${crypto.randomUUID()}${params.ext}`;
+      let thumbRelPath = `thumbs/${thumbFilename}`;
+
+      if (cleanAlbumId) {
+        thumbsDir = path.resolve(this.uploadDir, "albums", cleanAlbumId, "thumbs");
+        thumbRelPath = `albums/${cleanAlbumId}/thumbs/${thumbFilename}`;
+      }
+
+      if (!isPathInside(thumbsDir, this.uploadDir)) {
+        throw new Error("Invalid thumbnail directory: path traversal detected.");
+      }
+
+      const thumbDestPath = path.resolve(thumbsDir, thumbFilename);
+      if (!isPathInside(thumbDestPath, this.uploadDir)) {
+        throw new Error("Invalid thumbnail destination path.");
+      }
+
       if (!fs.existsSync(thumbsDir)) {
         await fs.promises.mkdir(thumbsDir, { recursive: true });
       }
-      const thumbFilename = `${crypto.randomUUID()}${params.ext}`;
-      const thumbDestPath = path.join(thumbsDir, thumbFilename);
+
       await fs.promises.writeFile(thumbDestPath, params.buffer);
       return {
-        url: `${this.publicPrefix}/thumbs/${thumbFilename}`,
-        key: `thumbs/${thumbFilename}`,
+        url: `${this.publicPrefix}/${thumbRelPath}`,
+        key: thumbRelPath,
       };
     } catch (err) {
       console.error("[LocalStorage]: Failed to save thumbnail:", err);
@@ -108,14 +190,17 @@ export class LocalStorageProvider implements StorageProvider {
 
   public async deleteImage(urlOrPath: string): Promise<boolean> {
     try {
-      const cleanPath = urlOrPath.replace(/^\/+/, "").replace(/\\/g, "/");
+      let cleanPath = urlOrPath.replace(/^\/+/, "").replace(/\\/g, "/");
+      if (cleanPath.startsWith("uploads/")) {
+        cleanPath = cleanPath.replace(/^uploads\//, "");
+      }
       let filePath = path.resolve(this.uploadDir, cleanPath);
 
-      if (!filePath.startsWith(this.uploadDir)) {
+      if (!isPathInside(filePath, this.uploadDir)) {
         filePath = path.resolve(this.uploadDir, path.basename(urlOrPath));
       }
 
-      if (!filePath.startsWith(this.uploadDir)) {
+      if (!isPathInside(filePath, this.uploadDir)) {
         return false;
       }
 
@@ -142,11 +227,11 @@ export class LocalStorageProvider implements StorageProvider {
       const cleanKey = key.replace(/^\/+/, "").replace(/\\/g, "/");
       let filePath = path.resolve(this.uploadDir, cleanKey);
 
-      if (!filePath.startsWith(this.uploadDir)) {
+      if (!isPathInside(filePath, this.uploadDir)) {
         filePath = path.resolve(this.uploadDir, path.basename(key));
       }
 
-      if (!filePath.startsWith(this.uploadDir)) {
+      if (!isPathInside(filePath, this.uploadDir)) {
         return null;
       }
 
@@ -192,7 +277,7 @@ export class LocalStorageProvider implements StorageProvider {
     }
 
     const destinationPath = path.resolve(privateDir, filename);
-    if (!destinationPath.startsWith(this.uploadDir)) {
+    if (!isPathInside(destinationPath, this.uploadDir)) {
       throw new Error("Invalid storage destination path.");
     }
 
@@ -219,7 +304,7 @@ export class LocalStorageProvider implements StorageProvider {
     }
 
     const destinationPath = path.resolve(videoDir, filename);
-    if (!destinationPath.startsWith(this.uploadDir)) {
+    if (!isPathInside(destinationPath, this.uploadDir)) {
       throw new Error("Invalid storage destination path.");
     }
 
@@ -247,7 +332,7 @@ export class LocalStorageProvider implements StorageProvider {
     }
 
     const destinationPath = path.resolve(privateVideoDir, filename);
-    if (!destinationPath.startsWith(this.uploadDir)) {
+    if (!isPathInside(destinationPath, this.uploadDir)) {
       throw new Error("Invalid storage destination path.");
     }
 

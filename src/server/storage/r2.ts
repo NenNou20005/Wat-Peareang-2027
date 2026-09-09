@@ -108,10 +108,16 @@ export class R2StorageProvider implements StorageProvider {
     buffer: Buffer;
     originalFilename: string;
     mimeType: string;
+    albumId?: string;
   }): Promise<StoredImageResult> {
     const client = this.getClient();
     const ext = getExtensionFromMime(params.mimeType);
-    const uniqueKey = `uploads/${Date.now()}-${crypto.randomBytes(6).toString("hex")}${ext}`;
+    const cleanAlbumId = params.albumId?.trim().replace(/^\/+|\/+$/g, "");
+    const fileId = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
+
+    const uniqueKey = cleanAlbumId
+      ? `albums/${cleanAlbumId}/originals/${fileId}${ext}`
+      : `uploads/${fileId}${ext}`;
 
     console.log(
       `[Storage/R2]: Starting upload to bucket="${this.bucketName}", key="${uniqueKey}", size=${params.buffer.length}B, mime="${params.mimeType}"`,
@@ -126,6 +132,7 @@ export class R2StorageProvider implements StorageProvider {
           ContentType: params.mimeType,
           Metadata: {
             originalFilename: encodeURIComponent(params.originalFilename),
+            ...(cleanAlbumId ? { albumId: cleanAlbumId } : {}),
           },
         }),
       );
@@ -138,7 +145,9 @@ export class R2StorageProvider implements StorageProvider {
 
       try {
         const thumb = await createImageThumbnail(params.buffer);
-        const thumbKey = `uploads/thumbs/${Date.now()}-${crypto.randomBytes(6).toString("hex")}${thumb.ext}`;
+        const thumbKey = cleanAlbumId
+          ? `albums/${cleanAlbumId}/thumbs/${fileId}-thumb${thumb.ext}`
+          : `uploads/thumbs/${fileId}${thumb.ext}`;
         await client.send(
           new PutObjectCommand({
             Bucket: this.bucketName,
@@ -148,6 +157,7 @@ export class R2StorageProvider implements StorageProvider {
             Metadata: {
               originalKey: uniqueKey,
               isThumbnail: "true",
+              ...(cleanAlbumId ? { albumId: cleanAlbumId } : {}),
             },
           }),
         );
@@ -187,10 +197,18 @@ export class R2StorageProvider implements StorageProvider {
     mimeType: string;
     ext: string;
     originalKey?: string;
+    albumId?: string;
   }): Promise<{ url: string; key: string } | null> {
     try {
       const client = this.getClient();
-      const thumbKey = `uploads/thumbs/${Date.now()}-${crypto.randomBytes(6).toString("hex")}${params.ext}`;
+      const detectedAlbumId =
+        params.albumId?.trim().replace(/^\/+|\/+$/g, "") ||
+        (params.originalKey?.match(/^albums\/([^/]+)\//)?.[1] ?? undefined);
+      const fileId = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
+      const thumbKey = detectedAlbumId
+        ? `albums/${detectedAlbumId}/thumbs/${fileId}-thumb${params.ext}`
+        : `uploads/thumbs/${fileId}${params.ext}`;
+
       await client.send(
         new PutObjectCommand({
           Bucket: this.bucketName,
@@ -200,6 +218,7 @@ export class R2StorageProvider implements StorageProvider {
           Metadata: {
             originalKey: params.originalKey || "",
             isThumbnail: "true",
+            ...(detectedAlbumId ? { albumId: detectedAlbumId } : {}),
           },
         }),
       );
@@ -470,6 +489,7 @@ export class R2StorageProvider implements StorageProvider {
     if (urlOrKey.startsWith("/assets/") || urlOrKey.startsWith("assets/")) {
       return "";
     }
+    // If already a plain relative storage key without protocol or leading slash
     if (
       !urlOrKey.startsWith("http://") &&
       !urlOrKey.startsWith("https://") &&
@@ -477,20 +497,39 @@ export class R2StorageProvider implements StorageProvider {
     ) {
       return urlOrKey.replace(/^\/+/, "");
     }
+    // Handle internal proxy endpoint (/api/storage/r2/...)
     if (urlOrKey.includes("/api/storage/r2/")) {
       const match = urlOrKey.match(/\/api\/storage\/r2\/(.+)/);
       return match && match[1] ? decodeURIComponent(match[1]).replace(/^\/+/, "") : "";
     }
+    // Handle configured public URL
     if (this.publicUrl && urlOrKey.startsWith(this.publicUrl)) {
       return urlOrKey.replace(this.publicUrl, "").replace(/^\/+/, "");
     }
-    // Handle match if protocol differed (http vs https)
+    // Handle protocol difference (http vs https)
     const publicUrlWithoutProto = this.publicUrl.replace(/^https?:\/\//, "");
     if (publicUrlWithoutProto && urlOrKey.includes(publicUrlWithoutProto)) {
       const idx = urlOrKey.indexOf(publicUrlWithoutProto);
       return urlOrKey.substring(idx + publicUrlWithoutProto.length).replace(/^\/+/, "");
     }
-    const parts = urlOrKey.split("/");
-    return parts.slice(-2).join("/");
+    // Match known storage prefixes (albums/, uploads/, private-archive/) to preserve full deep paths
+    const knownPrefixes = ["albums/", "uploads/", "private-archive/"];
+    for (const prefix of knownPrefixes) {
+      const idx = urlOrKey.indexOf(prefix);
+      if (idx !== -1) {
+        return urlOrKey.substring(idx).replace(/^\/+/, "");
+      }
+    }
+    // If it's a pathname with leading slash
+    if (urlOrKey.startsWith("/")) {
+      return urlOrKey.replace(/^\/+/, "");
+    }
+    // Fallback: extract from URL pathname without truncating segments
+    try {
+      const parsed = new URL(urlOrKey);
+      return parsed.pathname.replace(/^\/+/, "");
+    } catch {
+      return urlOrKey.replace(/^\/+/, "");
+    }
   }
 }

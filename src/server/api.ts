@@ -169,17 +169,33 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
 
   // Handle uploaded static images
   if (pathname.startsWith("/uploads/") && method === "GET") {
-    const filename = path.basename(pathname);
-    const uploadDir = path.resolve(process.cwd(), "public", "uploads");
-    const filePath = path.join(uploadDir, filename);
+    let relativeSubPath: string;
+    try {
+      relativeSubPath = decodeURIComponent(pathname.replace(/^\/uploads\//, ""));
+    } catch {
+      return new Response("Bad Request", { status: 400 });
+    }
 
-    if (!filePath.startsWith(uploadDir)) {
+    const uploadDir = path.resolve(process.cwd(), "public", "uploads");
+    const uploadDirWithSep = uploadDir.endsWith(path.sep) ? uploadDir : uploadDir + path.sep;
+    const filePath = path.resolve(uploadDir, relativeSubPath);
+    const relFromUpload = path.relative(uploadDir, filePath);
+
+    if (
+      !filePath.startsWith(uploadDirWithSep) ||
+      relFromUpload.startsWith("..") ||
+      path.isAbsolute(relFromUpload) ||
+      relFromUpload === ""
+    ) {
       return new Response("Forbidden", { status: 403 });
     }
 
     if (fs.existsSync(filePath)) {
       const fileStat = await fs.promises.stat(filePath);
-      const ext = path.extname(filename).toLowerCase();
+      if (fileStat.isDirectory()) {
+        return new Response("Forbidden", { status: 403 });
+      }
+      const ext = path.extname(filePath).toLowerCase();
       const mimeMap: Record<string, string> = {
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
@@ -1527,6 +1543,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
           buffer,
           originalFilename: file.name,
           mimeType: detectedMime,
+          albumId,
         });
 
         const newImageId = `img-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
@@ -1621,6 +1638,9 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
         } catch (dbErr) {
           // Failure handling: Cleanup newly stored file in R2 if DB insertion failed
           await storage.deleteImage(stored.url).catch(() => {});
+          if (stored.thumbnailUrl && stored.thumbnailUrl !== stored.url) {
+            await storage.deleteImage(stored.thumbnailUrl).catch(() => {});
+          }
           logger.error("Failed to insert image record to database", {
             error: dbErr,
             albumId,
@@ -1779,6 +1799,7 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
               mimeType: thumb.mimeType,
               ext: thumb.ext,
               originalKey: key,
+              albumId: img.albumId,
             });
           }
 

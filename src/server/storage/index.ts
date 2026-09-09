@@ -33,6 +33,7 @@ export interface StorageProvider {
     buffer: Buffer;
     originalFilename: string;
     mimeType: string;
+    albumId?: string;
   }): Promise<StoredImageResult>;
   deleteImage(urlOrPath: string): Promise<boolean>;
   getPublicUrl(filename: string): string;
@@ -46,6 +47,7 @@ export interface StorageProvider {
     mimeType: string;
     ext: string;
     originalKey?: string;
+    albumId?: string;
   }): Promise<{ url: string; key: string } | null>;
   getObjectStream?(key: string, range?: string): Promise<StorageObjectStream | null>;
   savePrivateImage?(params: {
