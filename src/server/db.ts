@@ -2094,7 +2094,41 @@ class Database {
       return { success: false, error: "មានតែ Super Admin ប៉ុណ្ណោះដែលអាចលុបជាអចិន្ត្រៃយ៍បាន។" };
     }
 
-    const img = this.data.images.find((i) => i.id === id);
+    let img = this.data.images.find((i) => i.id === id);
+
+    // Fallback to PostgreSQL if image record is not cached in memory (supports legacy and production images)
+    const drizzle = getDrizzleDb();
+    if (!img && drizzle) {
+      try {
+        const [pgRow] = await drizzle
+          .select()
+          .from(schema.images)
+          .where(eq(schema.images.id, id))
+          .limit(1);
+
+        if (pgRow) {
+          img = {
+            id: pgRow.id,
+            albumId: pgRow.albumId,
+            title: pgRow.title,
+            description: pgRow.description || undefined,
+            url: pgRow.url,
+            thumbnailUrl: pgRow.thumbnailUrl || undefined,
+            size: pgRow.size,
+            mimeType: pgRow.mimeType,
+            photographer: pgRow.photographer || undefined,
+            uploadedBy: pgRow.uploadedBy || user.id,
+            status: pgRow.status || "trashed",
+            createdAt: pgRow.createdAt
+              ? new Date(pgRow.createdAt).toISOString()
+              : new Date().toISOString(),
+          };
+        }
+      } catch (dbLookupErr) {
+        console.warn(`[PermanentDeleteImage]: PostgreSQL fallback lookup error for image ${id}:`, dbLookupErr);
+      }
+    }
+
     if (!img) return { success: false, error: "រកមិនឃើញរូបភាពនេះទេ។" };
 
     // 1. Delete image file(s) from Storage (Cloudflare R2 / Local Disk)
@@ -2110,8 +2144,13 @@ class Database {
       console.error(`[PermanentDeleteImage]: Storage deletion error for image ${id}:`, storageErr);
     }
 
-    // 2. Delete from Memory State
-    this.data.images = this.data.images.filter((i) => i.id !== id);
+    // 2. Delete from Memory State (if present)
+    const existsInMemory = this.data.images.some((i) => i.id === id);
+    if (existsInMemory) {
+      this.data.images = this.data.images.filter((i) => i.id !== id);
+      this.save();
+    }
+
     this.logActivity({
       userId: user.id,
       userName: user.name,
@@ -2121,10 +2160,8 @@ class Database {
       resourceId: id,
       details: `បានលុបរូបភាព ${img.title} ជាអចិន្ត្រៃយ៍`,
     });
-    this.save();
 
     // 3. Delete from PostgreSQL Database
-    const drizzle = getDrizzleDb();
     if (drizzle) {
       try {
         await drizzle.delete(schema.images).where(eq(schema.images.id, id));
