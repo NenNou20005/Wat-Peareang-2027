@@ -166,9 +166,10 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
   const url = new URL(request.url);
   const pathname = url.pathname;
   const method = request.method;
+  const normalizedPathname = pathname.replace(/\/+/g, "/").replace(/\/$/, "") || "/";
 
-  // Handle Dynamic sitemap.xml for Google & Search Engine Indexing
-  if ((pathname === "/sitemap.xml" || pathname === "/sitemap") && method === "GET") {
+  // Handle Dynamic sitemap.xml for Google & Search Engine Indexing (handles /sitemap.xml and //sitemap.xml safely)
+  if ((normalizedPathname === "/sitemap.xml" || normalizedPathname === "/sitemap") && method === "GET") {
     try {
       const siteUrl = process.env["SITE_URL"] || "https://wat-peareang-2027.onrender.com";
       let albums: { id: string }[] = [];
