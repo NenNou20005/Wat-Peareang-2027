@@ -17,7 +17,10 @@ import { useAdminYears, useCreateYear, useDeleteYear } from "@/hooks/useAdminDat
 
 export const Route = createFileRoute("/admin/years")({
   head: () => ({
-    meta: [{ title: "គ្រប់គ្រងឆ្នាំ — Wat Peareang Admin" }],
+    meta: [
+      { title: "គ្រប់គ្រងឆ្នាំ — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: AdminYearsPage,
 });

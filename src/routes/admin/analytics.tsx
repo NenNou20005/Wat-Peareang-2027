@@ -8,7 +8,10 @@ const AnalyticsDashboard = lazy(() =>
 
 export const Route = createFileRoute("/admin/analytics")({
   head: () => ({
-    meta: [{ title: "ស្ថិតិអ្នកទស្សនា — Wat Peareang Admin" }],
+    meta: [
+      { title: "ស្ថិតិអ្នកទស្សនា — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: AdminAnalyticsPage,
 });

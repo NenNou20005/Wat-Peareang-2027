@@ -27,7 +27,10 @@ import { resolveImageUrl } from "@/lib/asset-resolver";
 
 export const Route = createFileRoute("/admin/trash")({
   head: () => ({
-    meta: [{ title: "ធុងសំរាម (Trash & Recovery) — Wat Peareang Admin" }],
+    meta: [
+      { title: "ធុងសំរាម (Trash & Recovery) — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: AdminTrashPage,
 });

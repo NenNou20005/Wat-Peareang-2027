@@ -62,7 +62,10 @@ export const Route = createFileRoute("/admin/videos")({
     search: typeof search["search"] === "string" ? search["search"] : undefined,
   }),
   head: () => ({
-    meta: [{ title: "គ្រប់គ្រងវីដេអូ & Upload — Wat Peareang Admin" }],
+    meta: [
+      { title: "គ្រប់គ្រងវីដេអូ & Upload — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: AdminVideosPage,
 });

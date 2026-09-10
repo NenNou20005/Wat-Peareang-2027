@@ -44,7 +44,21 @@ export const Route = createFileRoute("/images")({
     search: typeof search["search"] === "string" ? search["search"] : undefined,
   }),
   head: () => ({
-    meta: [{ title: "វិចិត្រសាលរូបភាព — Khmer Festival Archive" }],
+    meta: [
+      { title: "វិចិត្រសាលរូបភាព — បណ្ណសារវត្តពារាំង | Wat Peareang Archive" },
+      {
+        name: "description",
+        content: "វិចិត្រសាលរូបភាពបុណ្យខ្មែរនៃវត្តពារាំង រៀបចំតាមឆ្នាំ និងតាមព្រឹត្តិការណ៍។",
+      },
+      { property: "og:title", content: "វិចិត្រសាលរូបភាព — វត្តពារាំង" },
+      {
+        property: "og:description",
+        content: "រុករករូបភាពបុណ្យខ្មែរនៃវត្តពារាំង តាមឆ្នាំ និងតាមពិធីបុណ្យ។",
+      },
+    ],
+    links: [
+      { rel: "canonical", href: "https://wat-peareang-2027.onrender.com/images" },
+    ],
   }),
   component: PublicImageGalleryPage,
 });

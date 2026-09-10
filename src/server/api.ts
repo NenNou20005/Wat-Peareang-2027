@@ -167,6 +167,73 @@ export async function handleApiRequest(request: Request): Promise<Response | nul
   const pathname = url.pathname;
   const method = request.method;
 
+  // Handle Dynamic sitemap.xml for Google & Search Engine Indexing
+  if ((pathname === "/sitemap.xml" || pathname === "/sitemap") && method === "GET") {
+    try {
+      const siteUrl = process.env["SITE_URL"] || "https://wat-peareang-2027.onrender.com";
+      let albums: { id: string }[] = [];
+
+      try {
+        const pgAlbums = await getPostgresAlbums();
+        if (pgAlbums && pgAlbums.length > 0) {
+          albums = pgAlbums.map((a) => ({ id: a.id }));
+        }
+      } catch (e) {
+        console.warn("[Sitemap]: Failed to fetch Postgres albums, falling back to memory:", e);
+      }
+
+      if (albums.length === 0) {
+        try {
+          const memAlbums = db.getAlbums();
+          albums = (memAlbums || []).map((a) => ({ id: a.id }));
+        } catch {
+          // ignore
+        }
+      }
+
+      const staticPages = [
+        { loc: `${siteUrl}/`, changefreq: "daily", priority: "1.0" },
+        { loc: `${siteUrl}/festivals`, changefreq: "weekly", priority: "0.9" },
+        { loc: `${siteUrl}/albums`, changefreq: "daily", priority: "0.9" },
+        { loc: `${siteUrl}/images`, changefreq: "daily", priority: "0.9" },
+        { loc: `${siteUrl}/years`, changefreq: "weekly", priority: "0.8" },
+        { loc: `${siteUrl}/developer`, changefreq: "monthly", priority: "0.5" },
+      ];
+
+      const albumPages = albums.map((a) => ({
+        loc: `${siteUrl}/album/${encodeURIComponent(a.id)}`,
+        changefreq: "weekly",
+        priority: "0.8",
+      }));
+
+      const allUrls = [...staticPages, ...albumPages];
+
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${allUrls
+  .map(
+    (u) => `  <url>
+    <loc>${u.loc}</loc>
+    <changefreq>${u.changefreq}</changefreq>
+    <priority>${u.priority}</priority>
+  </url>`,
+  )
+  .join("\n")}
+</urlset>`;
+
+      return new Response(xml, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/xml; charset=utf-8",
+          "Cache-Control": "public, max-age=3600, s-maxage=86400",
+        },
+      });
+    } catch (sitemapErr) {
+      console.error("[Sitemap]: Error generating sitemap.xml:", sitemapErr);
+      return new Response("Error generating sitemap", { status: 500 });
+    }
+  }
+
   // Handle uploaded static images
   if (pathname.startsWith("/uploads/") && method === "GET") {
     let relativeSubPath: string;

@@ -49,6 +49,9 @@ export const Route = createFileRoute("/festivals")({
         content: "រុករកបណ្ណសាររូបភាពប្រពៃណីវត្តពារាំង តាមបុណ្យ និងឆ្នាំនីមួយៗ។",
       },
     ],
+    links: [
+      { rel: "canonical", href: "https://wat-peareang-2027.onrender.com/festivals" },
+    ],
   }),
   component: FestivalsPage,
 });

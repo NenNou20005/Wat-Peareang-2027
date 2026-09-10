@@ -12,6 +12,7 @@ export const Route = createFileRoute("/admin/login")({
     meta: [
       { title: "ចូលគណនីគ្រប់គ្រង — Wat Peareang Admin" },
       { name: "description", content: "ផ្ទាំងចូលគណនីសម្រាប់ Super Admin និង Editor" },
+      { name: "robots", content: "noindex, nofollow" },
     ],
   }),
   component: AdminLoginPage,

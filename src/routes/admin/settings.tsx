@@ -21,7 +21,10 @@ import { DeveloperProfileManager } from "@/components/admin/DeveloperProfileMana
 
 export const Route = createFileRoute("/admin/settings")({
   head: () => ({
-    meta: [{ title: "ការកំណត់ — Wat Peareang Admin" }],
+    meta: [
+      { title: "ការកំណត់ — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: AdminSettingsPage,
 });

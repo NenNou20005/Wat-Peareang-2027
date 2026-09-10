@@ -7,7 +7,10 @@ import { Input } from "@/components/ui/input";
 
 export const Route = createFileRoute("/admin/activity-logs")({
   head: () => ({
-    meta: [{ title: "កំណត់ត្រាសកម្មភាព — Wat Peareang Admin" }],
+    meta: [
+      { title: "កំណត់ត្រាសកម្មភាព — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: AdminActivityLogsPage,
 });

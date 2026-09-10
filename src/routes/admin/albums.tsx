@@ -247,7 +247,10 @@ function AlbumCoverPicker({
 
 export const Route = createFileRoute("/admin/albums")({
   head: () => ({
-    meta: [{ title: "គ្រប់គ្រង Albums — Wat Peareang Admin" }],
+    meta: [
+      { title: "គ្រប់គ្រង Albums — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: AdminAlbumsPage,
 });

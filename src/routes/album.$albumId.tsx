@@ -40,14 +40,21 @@ export const Route = createFileRoute("/album/$albumId")({
       };
     }
     const { album } = loaderData;
-    const title = `${album.festival.name} ឆ្នាំ ${toKhmerNumber(album.year)} — បណ្ណសារបុណ្យខ្មែរ`;
-    const description = `${toKhmerNumber(album.photoCount)} រូបភាពពី ${album.festival.name} ក្នុងឆ្នាំ ${toKhmerNumber(album.year)}។`;
+    const title = `${album.festival.name} ឆ្នាំ ${toKhmerNumber(album.year)} — វត្តពារាំង | Wat Peareang Archive`;
+    const description = `${toKhmerNumber(album.photoCount)} រូបភាពពី ${album.festival.name} ក្នុងឆ្នាំ ${toKhmerNumber(album.year)} នៅវត្តពារាំង។`;
+    const canonicalUrl = `https://wat-peareang-2027.onrender.com/album/${album.id}`;
+    const coverUrl = album.coverImage || album.festival.cover;
     return {
       meta: [
         { title },
         { name: "description", content: description },
         { property: "og:title", content: title },
         { property: "og:description", content: description },
+        { property: "og:url", content: canonicalUrl },
+        ...(coverUrl ? [{ property: "og:image", content: coverUrl }] : []),
+      ],
+      links: [
+        { rel: "canonical", href: canonicalUrl },
       ],
     };
   },

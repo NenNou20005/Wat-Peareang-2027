@@ -42,7 +42,10 @@ export const Route = createFileRoute("/admin/image-gallery")({
     search: typeof search["search"] === "string" ? search["search"] : undefined,
   }),
   head: () => ({
-    meta: [{ title: "វិចិត្រសាលរូបភាព — Wat Peareang Admin" }],
+    meta: [
+      { title: "វិចិត្រសាលរូបភាព — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: AdminImageGalleryPage,
 });

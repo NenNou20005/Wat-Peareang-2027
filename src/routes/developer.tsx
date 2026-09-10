@@ -18,6 +18,9 @@ export const Route = createFileRoute("/developer")({
         content: "Developed by Shal Vannou — ព័ត៌មានទំនាក់ទំនង និងប្រវត្តិអ្នកបង្កើត។",
       },
     ],
+    links: [
+      { rel: "canonical", href: "https://wat-peareang-2027.onrender.com/developer" },
+    ],
   }),
   component: DeveloperPage,
 });

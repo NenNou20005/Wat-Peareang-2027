@@ -23,7 +23,10 @@ import {
 
 export const Route = createFileRoute("/admin/festivals")({
   head: () => ({
-    meta: [{ title: "គ្រប់គ្រងបុណ្យ — Wat Peareang Admin" }],
+    meta: [
+      { title: "គ្រប់គ្រងបុណ្យ — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: AdminFestivalsPage,
 });

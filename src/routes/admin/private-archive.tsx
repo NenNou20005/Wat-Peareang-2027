@@ -58,7 +58,10 @@ import {
 
 export const Route = createFileRoute("/admin/private-archive")({
   head: () => ({
-    meta: [{ title: "បណ្ណសារសម្ងាត់ — Wat Peareang Admin" }],
+    meta: [
+      { title: "បណ្ណសារសម្ងាត់ — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: AdminPrivateArchivePage,
 });

@@ -1,14 +1,31 @@
 User-agent: Googlebot
 Allow: /
+Disallow: /admin/
+Disallow: /api/
+Disallow: /favorites
 
 User-agent: Bingbot
 Allow: /
+Disallow: /admin/
+Disallow: /api/
+Disallow: /favorites
 
 User-agent: Twitterbot
 Allow: /
+Disallow: /admin/
+Disallow: /api/
+Disallow: /favorites
 
 User-agent: facebookexternalhit
 Allow: /
+Disallow: /admin/
+Disallow: /api/
+Disallow: /favorites
 
 User-agent: *
 Allow: /
+Disallow: /admin/
+Disallow: /api/
+Disallow: /favorites
+
+Sitemap: https://wat-peareang-2027.onrender.com/sitemap.xml

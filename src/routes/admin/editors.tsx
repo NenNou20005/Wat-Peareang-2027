@@ -40,7 +40,10 @@ import {
 
 export const Route = createFileRoute("/admin/editors")({
   head: () => ({
-    meta: [{ title: "គ្រប់គ្រងអ្នកកែសម្រួល — Wat Peareang Admin" }],
+    meta: [
+      { title: "គ្រប់គ្រងអ្នកកែសម្រួល — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: EditorsManagementPage,
 });

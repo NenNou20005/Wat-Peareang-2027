@@ -8,16 +8,19 @@ import { useYears, useArchiveStats, useAlbums } from "@/hooks/useArchiveData";
 export const Route = createFileRoute("/years")({
   head: () => ({
     meta: [
-      { title: "តាមឆ្នាំ — បណ្ណសារបុណ្យខ្មែរ" },
+      { title: "តាមឆ្នាំ — បណ្ណសារវត្តពារាំង | Wat Peareang Archive" },
       {
         name: "description",
-        content: "រុករកបុណ្យខ្មែរតាមឆ្នាំ ២០១៨ ដល់ ២០២៦ ជាមួយចំនួនរូបភាព និងទីកន្លែង។",
+        content: "រុករកបុណ្យខ្មែរនៃវត្តពារាំង តាមឆ្នាំ ២០១៨ ដល់ ២០២៦ ជាមួយចំនួនរូបភាព និងពិធីបុណ្យនានា។",
       },
-      { property: "og:title", content: "បណ្ណសារបុណ្យខ្មែរ តាមឆ្នាំ" },
+      { property: "og:title", content: "បណ្ណសារបុណ្យខ្មែរ តាមឆ្នាំ — វត្តពារាំង" },
       {
         property: "og:description",
-        content: "Timeline បុណ្យខ្មែរតាមឆ្នាំ ជាមួយ Albums និងរូបភាព។",
+        content: "Timeline បុណ្យខ្មែរនៃវត្តពារាំងតាមឆ្នាំ ជាមួយ Albums និងរូបភាព។",
       },
+    ],
+    links: [
+      { rel: "canonical", href: "https://wat-peareang-2027.onrender.com/years" },
     ],
   }),
   component: YearsPage,

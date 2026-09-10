@@ -62,7 +62,10 @@ export const Route = createFileRoute("/admin/images")({
     page: typeof search["page"] === "number" ? search["page"] : undefined,
   }),
   head: () => ({
-    meta: [{ title: "គ្រប់គ្រងរូបភាព & Upload — Wat Peareang Admin" }],
+    meta: [
+      { title: "គ្រប់គ្រងរូបភាព & Upload — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: AdminImagesPage,
 });

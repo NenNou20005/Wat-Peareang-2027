@@ -21,17 +21,22 @@ import { HomeSlideshow } from "@/components/site/HomeSlideshow";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "🏛️ បណ្ណសាររូបភាព — រក្សាទុកអនុស្សាវរីយ៍" },
+      { title: "🏛️ បណ្ណសារវត្តពារាំង — រក្សាទុកអនុស្សាវរីយ៍ និងបុណ្យខ្មែរ | Wat Peareang Archive" },
       {
         name: "description",
         content:
-          "បណ្ណសាររូបភាពបុណ្យខ្មែរ រៀបចំតាមឆ្នាំ និងតាមព្រឹត្តិការណ៍ — ចូលឆ្នាំ វិសាខបូជា ភ្ជុំបិណ្ឌ អុំទូក និងច្រើនទៀត។",
+          "បណ្ណសាររូបភាព និងអនុស្សាវរីយ៍បុណ្យខ្មែរនៃវត្តពារាំង រៀបចំតាមឆ្នាំ និងតាមព្រឹត្តិការណ៍ — ចូលឆ្នាំ វិសាខបូជា ភ្ជុំបិណ្ឌ អុំទូក និងច្រើនទៀត។ Wat Peareang Khmer Festival Photo Archive.",
       },
-      { property: "og:title", content: "🏛️ បណ្ណសាររូបភាព — Khmer Festival Photo Archive" },
+      { property: "og:title", content: "🏛️ បណ្ណសារវត្តពារាំង — Wat Peareang Khmer Festival Photo Archive" },
       {
         property: "og:description",
-        content: "រក្សាទុកអនុស្សាវរីយ៍ និងរូបភាពបុណ្យខ្មែរ តាមឆ្នាំ និងតាមព្រឹត្តិការណ៍។",
+        content: "រក្សាទុកអនុស្សាវរីយ៍ និងរូបភាពបុណ្យខ្មែរនៃវត្តពារាំង តាមឆ្នាំ និងតាមព្រឹត្តិការណ៍។",
       },
+      { property: "og:url", content: "https://wat-peareang-2027.onrender.com/" },
+      { property: "og:image", content: "https://wat-peareang-2027.onrender.com/favicon.png" },
+    ],
+    links: [
+      { rel: "canonical", href: "https://wat-peareang-2027.onrender.com/" },
     ],
   }),
   component: Index,

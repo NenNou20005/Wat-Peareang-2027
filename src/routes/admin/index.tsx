@@ -27,7 +27,10 @@ import { useAdminDashboard } from "@/hooks/useAdminData";
 
 export const Route = createFileRoute("/admin/")({
   head: () => ({
-    meta: [{ title: "ផ្ទាំងគ្រប់គ្រង — Wat Peareang Admin" }],
+    meta: [
+      { title: "ផ្ទាំងគ្រប់គ្រង — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: AdminDashboardPage,
 });

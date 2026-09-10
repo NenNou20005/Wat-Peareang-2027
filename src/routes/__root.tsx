@@ -94,12 +94,15 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "🏛️ បណ្ណសាររូបភាព — Khmer Festival Photo Archive" },
+      { title: "🏛️ បណ្ណសារវត្តពារាំង — Wat Peareang Khmer Festival Photo Archive" },
       {
         name: "description",
-        content: "រក្សាទុកអនុស្សាវរីយ៍ និងរូបភាពបុណ្យខ្មែរ តាមឆ្នាំ និងតាមព្រឹត្តិការណ៍។",
+        content:
+          "បណ្ណសាររូបភាព និងអនុស្សាវរីយ៍បុណ្យខ្មែរនៃវត្តពារាំង រៀបចំតាមឆ្នាំ និងតាមព្រឹត្តិការណ៍ — Wat Peareang Khmer Festival Photo Archive.",
       },
+      { property: "og:site_name", content: "វត្តពារាំង — Wat Peareang Archive" },
       { property: "og:type", content: "website" },
+      { property: "og:image", content: "/favicon.png" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
     links: [

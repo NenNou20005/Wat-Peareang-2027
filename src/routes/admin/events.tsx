@@ -43,7 +43,10 @@ import { toKhmerNumber } from "@/data/archive";
 
 export const Route = createFileRoute("/admin/events")({
   head: () => ({
-    meta: [{ title: "គ្រប់គ្រងពិធីការរង (Events) — Wat Peareang Admin" }],
+    meta: [
+      { title: "គ្រប់គ្រងពិធីការរង (Events) — Wat Peareang Admin" },
+      { name: "robots", content: "noindex, nofollow" },
+    ],
   }),
   component: AdminEventsPage,
 });
