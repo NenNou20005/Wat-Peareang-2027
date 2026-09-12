@@ -26,11 +26,20 @@ export function useAnalyticsOverview(period: AnalyticsPeriod = "today") {
   });
 }
 
-export function useAnalyticsViewsSeries(period: "today" | "7d" | "30d" = "7d") {
+export function useAnalyticsViewsSeries(
+  period: string = "7d",
+  startDate?: string | null,
+  endDate?: string | null,
+) {
   return useQuery<ViewsSeriesPoint[]>({
-    queryKey: ["admin", "analytics", "views", period],
+    queryKey: ["admin", "analytics", "views", period, startDate, endDate],
     queryFn: async () => {
-      const res = await fetch(`/api/admin/analytics/views?period=${period}`, {
+      const params = new URLSearchParams();
+      params.set("period", period);
+      if (startDate) params.set("startDate", startDate);
+      if (endDate) params.set("endDate", endDate);
+
+      const res = await fetch(`/api/admin/analytics/views?${params.toString()}`, {
         credentials: "include",
       });
       const data = await res.json();

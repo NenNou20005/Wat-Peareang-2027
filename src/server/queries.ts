@@ -2105,23 +2105,30 @@ export interface ViewsSeriesPoint {
  * 4. Time Series for Views & Visitors charts (Today hourly or 7d/30d daily)
  */
 export async function getPostgresAnalyticsViewsSeries(
-  period: "today" | "7d" | "30d" = "7d",
+  period: ReportPeriod | string = "7d",
+  customStartDate?: string | null,
+  customEndDate?: string | null,
 ): Promise<ViewsSeriesPoint[]> {
   const db = getDrizzleDb();
   const KHMER_DAYS = ["អាទិត្យ", "ចន្ទ", "អង្គារ", "ពុធ", "ព្រហស្បតិ៍", "សុក្រ", "សៅរ៍"];
   const OFFSET_MS = 7 * 60 * 60 * 1000;
+  const { startDate, endDate, daysCount } = getPhnomPenhDateBounds(
+    period,
+    customStartDate,
+    customEndDate,
+  );
+  const safeDaysCount = Math.max(1, Math.min(daysCount, 730));
+  const isSingleDay = period === "today" || period === "yesterday" || safeDaysCount === 1;
 
   if (!db || !isPostgresConfigured()) {
     // Generate empty placeholder series
-    const daysCount = period === "today" ? 12 : period === "7d" ? 7 : 30;
-    const now = new Date();
     const result: ViewsSeriesPoint[] = [];
 
-    if (period === "today") {
+    if (isSingleDay) {
       for (let h = 0; h < 24; h += 2) {
         result.push({
-          date: `${h}:00`,
-          label: `${h}:00`,
+          date: `${h.toString().padStart(2, "0")}:00`,
+          label: `${h.toString().padStart(2, "0")}:00`,
           visitors: 0,
           pageViews: 0,
           albumViews: 0,
@@ -2130,14 +2137,15 @@ export async function getPostgresAnalyticsViewsSeries(
         });
       }
     } else {
-      for (let i = daysCount - 1; i >= 0; i--) {
-        const d = new Date(now.getTime() + OFFSET_MS - i * 24 * 60 * 60 * 1000);
+      for (let i = safeDaysCount - 1; i >= 0; i--) {
+        const d = new Date(endDate.getTime() + OFFSET_MS - i * 24 * 60 * 60 * 1000);
         const dayOfWeek = KHMER_DAYS[d.getUTCDay()];
         const dateNum = d.getUTCDate();
+        const monthNum = d.getUTCMonth() + 1;
         const dateStr = d.toISOString().split("T")[0]!;
         result.push({
           date: dateStr,
-          label: `${dayOfWeek} ${dateNum}`,
+          label: safeDaysCount > 14 ? `${dateNum}/${monthNum}` : `${dayOfWeek} ${dateNum}`,
           visitors: 0,
           pageViews: 0,
           albumViews: 0,
@@ -2150,9 +2158,6 @@ export async function getPostgresAnalyticsViewsSeries(
   }
 
   try {
-    const { startDate } = getPhnomPenhDateBounds(period);
-    const now = new Date();
-
     const rawViews = await db
       .select({
         resourceType: schema.viewsLog.resourceType,
@@ -2160,10 +2165,17 @@ export async function getPostgresAnalyticsViewsSeries(
         createdAt: schema.viewsLog.createdAt,
       })
       .from(schema.viewsLog)
-      .where(gte(schema.viewsLog.createdAt, startDate))
+      .where(
+        period === "all"
+          ? undefined
+          : and(
+              gte(schema.viewsLog.createdAt, startDate),
+              lte(schema.viewsLog.createdAt, endDate),
+            ),
+      )
       .orderBy(asc(schema.viewsLog.createdAt));
 
-    if (period === "today") {
+    if (isSingleDay) {
       // 2-hour interval slots
       const slots: Record<
         number,
@@ -2210,7 +2222,6 @@ export async function getPostgresAnalyticsViewsSeries(
       });
     } else {
       // Daily intervals
-      const daysCount = period === "7d" ? 7 : 30;
       const daySlots: Record<
         string,
         {
@@ -2222,13 +2233,14 @@ export async function getPostgresAnalyticsViewsSeries(
         }
       > = {};
 
-      for (let i = daysCount - 1; i >= 0; i--) {
-        const d = new Date(now.getTime() + OFFSET_MS - i * 24 * 60 * 60 * 1000);
+      for (let i = safeDaysCount - 1; i >= 0; i--) {
+        const d = new Date(endDate.getTime() + OFFSET_MS - i * 24 * 60 * 60 * 1000);
         const dayOfWeek = KHMER_DAYS[d.getUTCDay()];
         const dateNum = d.getUTCDate();
+        const monthNum = d.getUTCMonth() + 1;
         const dateStr = d.toISOString().split("T")[0]!;
         daySlots[dateStr] = {
-          label: `${dayOfWeek} ${dateNum}`,
+          label: safeDaysCount > 14 ? `${dateNum}/${monthNum}` : `${dayOfWeek} ${dateNum}`,
           visitors: new Set(),
           pageViews: 0,
           albumViews: 0,

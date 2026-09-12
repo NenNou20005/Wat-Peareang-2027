@@ -24,10 +24,18 @@ function PageTracker() {
   const pathname = routerState.location.pathname;
 
   useEffect(() => {
-    // 1. Initialize anonymous visitor session
+    // 1. Exclude admin routes from public visitor tracking
+    if (pathname.startsWith("/admin")) {
+      return;
+    }
+
+    // 2. Initialize anonymous visitor session for public visitors
     initVisitorSession();
-    // 2. Track current page view
-    trackPageView(pathname);
+
+    // 3. Track current page view (exclude /album/* to prevent double-counting with trackAlbumView)
+    if (!pathname.startsWith("/album/")) {
+      trackPageView(pathname);
+    }
   }, [pathname]);
 
   return null;

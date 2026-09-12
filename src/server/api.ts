@@ -4490,10 +4490,11 @@ ${allUrls
     if (auth instanceof Response) return auth;
 
     try {
-      const periodParam = (url.searchParams.get("period") || "7d") as "today" | "7d" | "30d";
-      const period = ["today", "7d", "30d"].includes(periodParam) ? periodParam : "7d";
+      const period = url.searchParams.get("period") || "7d";
+      const startDate = url.searchParams.get("startDate");
+      const endDate = url.searchParams.get("endDate");
 
-      const series = await db.getAnalyticsViewsSeries(period);
+      const series = await db.getAnalyticsViewsSeries(period, startDate, endDate);
       return json({ success: true, data: series });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Failed to fetch analytics series";

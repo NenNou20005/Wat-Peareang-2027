@@ -2736,10 +2736,12 @@ class Database {
   }
 
   public async getAnalyticsViewsSeries(
-    period: "today" | "7d" | "30d" = "7d",
+    period: ReportPeriod | string = "7d",
+    customStartDate?: string | null,
+    customEndDate?: string | null,
   ): Promise<ViewsSeriesPoint[]> {
     if (isPostgresConfigured()) {
-      return await getPostgresAnalyticsViewsSeries(period);
+      return await getPostgresAnalyticsViewsSeries(period, customStartDate, customEndDate);
     }
 
     const KHMER_DAYS = ["អាទិត្យ", "ចន្ទ", "អង្គារ", "ពុធ", "ព្រហស្បតិ៍", "សុក្រ", "សៅរ៍"];

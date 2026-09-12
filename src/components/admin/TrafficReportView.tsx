@@ -22,8 +22,11 @@ export interface TrafficReportViewProps {
 }
 
 export function TrafficReportView({ period, startDate, endDate }: TrafficReportViewProps) {
-  const seriesPeriod = period === "today" ? "today" : period === "30d" ? "30d" : "7d";
-  const { data: viewsSeries, isLoading: isSeriesLoading } = useAnalyticsViewsSeries(seriesPeriod);
+  const { data: viewsSeries, isLoading: isSeriesLoading } = useAnalyticsViewsSeries(
+    period,
+    startDate,
+    endDate,
+  );
   const { data: summaryData, isLoading: isSummaryLoading } = useReportsSummary(
     period,
     startDate,
