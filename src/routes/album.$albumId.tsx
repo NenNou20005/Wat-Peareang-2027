@@ -1,4 +1,4 @@
-import { createFileRoute, notFound, Link, useParams } from "@tanstack/react-router";
+import { createFileRoute, notFound, Link, useParams, useRouter, useNavigate, useCanGoBack } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { useState, useEffect } from "react";
 import { Share2, Download, Images, ArrowLeft, Film } from "lucide-react";
@@ -27,7 +27,43 @@ const getAlbumServerFn = createServerFn({ method: "GET" })
     };
   });
 
+export type AlbumDetailSearch = {
+  from?: string | undefined;
+  year?: number | "all" | undefined;
+  festival?: string | undefined;
+};
+
 export const Route = createFileRoute("/album/$albumId")({
+  validateSearch: (search: Record<string, unknown>): AlbumDetailSearch => {
+    const rawFrom = search["from"];
+    const from =
+      typeof rawFrom === "string" && rawFrom.trim() ? rawFrom.trim() : undefined;
+
+    const rawYear = search["year"];
+    let year: number | "all" | undefined = undefined;
+    if (typeof rawYear === "number" && !isNaN(rawYear)) {
+      year = rawYear;
+    } else if (typeof rawYear === "string") {
+      if (rawYear === "all") {
+        year = "all";
+      } else {
+        const parsed = parseInt(rawYear, 10);
+        if (!isNaN(parsed)) year = parsed;
+      }
+    }
+
+    const rawFestival = search["festival"];
+    const festival =
+      typeof rawFestival === "string" && rawFestival.trim()
+        ? rawFestival.trim()
+        : undefined;
+
+    return {
+      from,
+      year,
+      festival,
+    };
+  },
   loader: async ({ params }) => {
     const album = await getAlbumServerFn({ data: params.albumId });
     if (!album) throw notFound();
@@ -64,9 +100,75 @@ export const Route = createFileRoute("/album/$albumId")({
 function AlbumDetail() {
   const { album: initialAlbum } = Route.useLoaderData();
   const { albumId } = useParams({ from: "/album/$albumId" });
+  const search = Route.useSearch();
+  const router = useRouter();
+  const navigate = useNavigate();
+  const canGoBack = useCanGoBack();
 
   const { data: dbAlbum } = useAlbum(albumId);
   const album = dbAlbum ?? initialAlbum;
+
+  const handleBack = () => {
+    if (search.from === "home") {
+      navigate({
+        to: "/",
+        search: {
+          year: search.year,
+          festival: search.festival,
+        },
+      });
+      return;
+    }
+
+    if (search.from === "albums") {
+      navigate({
+        to: "/albums",
+        search: {
+          year: search.year === "all" ? undefined : search.year,
+          festival: search.festival,
+        },
+      });
+      return;
+    }
+
+    if (canGoBack && typeof window !== "undefined" && window.history.length > 1) {
+      router.history.back();
+    } else {
+      navigate({
+        to: "/albums",
+        search: {
+          year: album.year,
+          festival: album.festivalId,
+        },
+      });
+    }
+  };
+
+  const backHref = (() => {
+    if (search.from === "home") {
+      const params = new URLSearchParams();
+      if (search.year) {
+        params.set("year", String(search.year));
+      }
+      if (search.festival) {
+        params.set("festival", search.festival);
+      }
+      const qs = params.toString();
+      return qs ? `/?${qs}` : "/";
+    }
+    if (search.from === "albums") {
+      const params = new URLSearchParams();
+      if (search.year && search.year !== "all") {
+        params.set("year", String(search.year));
+      }
+      if (search.festival) {
+        params.set("festival", search.festival);
+      }
+      const qs = params.toString();
+      return qs ? `/albums?${qs}` : "/albums";
+    }
+    return `/albums?year=${album.year}&festival=${encodeURIComponent(album.festivalId)}`;
+  })();
 
   const { data: photos = [] } = useAlbumPhotos(albumId);
   const { data: videos = [] } = useAlbumVideos(albumId);
@@ -120,12 +222,16 @@ function AlbumDetail() {
         <div className="absolute inset-0 z-[2] hero-scrim" />
         <div className="absolute inset-0 z-[3]">
           <div className="mx-auto flex h-full max-w-[1400px] flex-col justify-end px-4 pb-8 lg:px-8">
-            <Link
-              to="/albums"
+            <a
+              href={backHref}
+              onClick={(e) => {
+                e.preventDefault();
+                handleBack();
+              }}
               className="mb-4 inline-flex w-max items-center gap-1.5 rounded-full bg-background/85 px-3 py-1.5 text-xs backdrop-blur-sm"
             >
               <ArrowLeft className="h-3.5 w-3.5" /> Albums
-            </Link>
+            </a>
             <h1 className="flex items-center gap-3 text-2xl text-primary-foreground md:text-4xl">
               <span
                 className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl text-lg"

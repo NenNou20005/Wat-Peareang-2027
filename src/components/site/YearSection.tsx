@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import type { AlbumDetailSearch } from "@/routes/album.$albumId";
 import { ArrowRight } from "lucide-react";
 import { toKhmerNumber, type Album } from "@/data/archive";
 import { AlbumCard } from "@/components/site/AlbumCard";
@@ -39,9 +40,11 @@ export function YearSectionHeader({
 export function AlbumGrid({
   items,
   onSelectAlbum,
+  albumLinkSearch,
 }: {
   items: Album[];
   onSelectAlbum?: (album: Album) => void;
+  albumLinkSearch?: AlbumDetailSearch | undefined;
 }) {
   return (
     <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -50,6 +53,7 @@ export function AlbumGrid({
           key={album.id}
           album={album}
           index={i + 1}
+          albumLinkSearch={albumLinkSearch}
           {...(onSelectAlbum ? { onSelect: onSelectAlbum } : {})}
         />
       ))}
@@ -61,10 +65,12 @@ export function YearSection({
   year,
   festivalFilter,
   albums,
+  albumLinkSearch,
 }: {
   year: number;
   festivalFilter?: string[];
   albums?: Album[];
+  albumLinkSearch?: AlbumDetailSearch | undefined;
 }) {
   const { data: defaultAlbums = [] } = useAlbums(undefined, { enabled: !albums });
   const sourceAlbums = albums ?? defaultAlbums;
@@ -83,7 +89,7 @@ export function YearSection({
   return (
     <section id={`year-${year}`} className="scroll-mt-28 space-y-6">
       <YearSectionHeader year={year} dynamicStats={dynamicStats} />
-      <AlbumGrid items={items} />
+      <AlbumGrid items={items} albumLinkSearch={albumLinkSearch} />
     </section>
   );
 }

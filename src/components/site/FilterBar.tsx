@@ -11,6 +11,7 @@ import { toKhmerNumber, type Festival } from "@/data/archive";
 import { cn } from "@/lib/utils";
 import { useMemo, useState, lazy, Suspense } from "react";
 import { Link } from "@tanstack/react-router";
+import type { AlbumDetailSearch } from "@/routes/album.$albumId";
 const AddFestivalModal = lazy(() =>
   import("@/components/site/AddFestivalModal").then((m) => ({ default: m.AddFestivalModal }))
 );
@@ -101,11 +102,13 @@ export function FestivalPills({
   onToggle,
   onClear,
   activeYear,
+  albumLinkSearch,
 }: {
   selected: string[];
   onToggle: (id: string) => void;
   onClear: () => void;
   activeYear?: number | "all" | undefined;
+  albumLinkSearch?: AlbumDetailSearch | undefined;
 }) {
   const { data: dbFestivals = [] } = useFestivals();
   const [extraFestivals, setExtraFestivals] = useState<Festival[]>([]);
@@ -296,6 +299,8 @@ export function FestivalPills({
                       key={alb.id}
                       to="/album/$albumId"
                       params={{ albumId: alb.id }}
+                      {...(albumLinkSearch ? { search: albumLinkSearch } : {})}
+                      search={albumLinkSearch ?? {}}
                       className="group relative flex flex-col w-28 sm:w-32 shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:border-gold/60 hover:shadow-card cursor-pointer"
                     >
                       {/* Album Thumbnail */}

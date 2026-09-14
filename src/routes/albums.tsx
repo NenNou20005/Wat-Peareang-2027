@@ -1,10 +1,40 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import type { AlbumDetailSearch } from "@/routes/album.$albumId";
 import { YearPills, FestivalPills } from "@/components/site/FilterBar";
 import { YearSection } from "@/components/site/YearSection";
 import { useYears, useAlbums } from "@/hooks/useArchiveData";
 
+export type AlbumsSearch = {
+  year?: number | "all" | undefined;
+  festival?: string | undefined;
+};
+
 export const Route = createFileRoute("/albums")({
+  validateSearch: (search: Record<string, unknown>): AlbumsSearch => {
+    const rawYear = search["year"];
+    let year: number | "all" = "all";
+    if (typeof rawYear === "number" && !isNaN(rawYear)) {
+      year = rawYear;
+    } else if (typeof rawYear === "string") {
+      if (rawYear === "all") {
+        year = "all";
+      } else {
+        const parsed = parseInt(rawYear, 10);
+        year = !isNaN(parsed) ? parsed : "all";
+      }
+    }
+
+    const rawFestival = search["festival"];
+    const festival =
+      typeof rawFestival === "string" && rawFestival.trim()
+        ? rawFestival.trim()
+        : undefined;
+
+    return {
+      year,
+      festival,
+    };
+  },
   head: () => ({
     meta: [
       { title: "Albums បុណ្យខ្មែរ — បណ្ណសារវត្តពារាំង | Wat Peareang Archive" },
@@ -28,9 +58,54 @@ export const Route = createFileRoute("/albums")({
 function AlbumsPage() {
   const { data: years = [] } = useYears();
   const { data: allAlbums = [] } = useAlbums();
-  const [year, setYear] = useState<number | "all">("all");
-  const [selected, setSelected] = useState<string[]>([]);
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
+
+  const year = search.year ?? "all";
+  const festival = search.festival;
+  const selected: string[] = festival ? [festival] : [];
   const shownYears = year === "all" ? years : [year];
+
+  const albumLinkSearch: AlbumDetailSearch = {
+    from: "albums",
+    year,
+    festival,
+  };
+
+  const handleYearChange = (newYear: number | "all") => {
+    navigate({
+      search: {
+        year: newYear === "all" ? undefined : newYear,
+        festival,
+      },
+      replace: true,
+      resetScroll: false,
+    });
+  };
+
+  const handleToggleFestival = (id: string) => {
+    const nextFestival = festival === id ? undefined : id;
+
+    navigate({
+      search: {
+        year: search.year === "all" ? undefined : search.year,
+        festival: nextFestival,
+      },
+      replace: true,
+      resetScroll: false,
+    });
+  };
+
+  const handleClearFestival = () => {
+    navigate({
+      search: {
+        year: search.year === "all" ? undefined : search.year,
+        festival: undefined,
+      },
+      replace: true,
+      resetScroll: false,
+    });
+  };
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 py-10 lg:px-8">
@@ -40,22 +115,25 @@ function AlbumsPage() {
       </p>
 
       <div className="mt-8 space-y-4">
-        <YearPills value={year} onChange={setYear} />
+        <YearPills value={year} onChange={handleYearChange} />
         <FestivalPills
           selected={selected}
           activeYear={year}
-          onToggle={(id) =>
-            setSelected((prev) =>
-              prev.includes(id) ? [] : [id],
-            )
-          }
-          onClear={() => setSelected([])}
+          albumLinkSearch={albumLinkSearch}
+          onToggle={handleToggleFestival}
+          onClear={handleClearFestival}
         />
       </div>
 
       <div className="mt-12 space-y-16">
         {shownYears.map((y) => (
-          <YearSection key={y} year={y} festivalFilter={selected} albums={allAlbums} />
+          <YearSection
+            key={y}
+            year={y}
+            festivalFilter={selected}
+            albums={allAlbums}
+            albumLinkSearch={albumLinkSearch}
+          />
         ))}
       </div>
     </div>

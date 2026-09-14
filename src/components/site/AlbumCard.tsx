@@ -1,4 +1,5 @@
 import { Link } from "@tanstack/react-router";
+import type { AlbumDetailSearch } from "@/routes/album.$albumId";
 import { ArrowRight, Images, Film } from "lucide-react";
 import type { Album } from "@/data/archive";
 import { toKhmerNumber } from "@/data/archive";
@@ -10,10 +11,12 @@ export function AlbumCard({
   album,
   index,
   onSelect,
+  albumLinkSearch,
 }: {
   album: Album;
   index?: number;
   onSelect?: (album: Album) => void;
+  albumLinkSearch?: AlbumDetailSearch | undefined;
 }) {
   return (
     <article className="group overflow-hidden rounded-3xl bg-card shadow-card transition-all duration-300 hover:-translate-y-1 hover:shadow-card-hover">
@@ -109,6 +112,8 @@ export function AlbumCard({
           <Link
             to="/album/$albumId"
             params={{ albumId: album.id }}
+            {...(albumLinkSearch ? { search: albumLinkSearch } : {})}
+            search={albumLinkSearch ?? {}}
             onClick={() => onSelect?.(album)}
             className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs text-primary-foreground transition-colors hover:bg-primary/90"
           >

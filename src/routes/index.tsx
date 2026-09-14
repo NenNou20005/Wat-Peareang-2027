@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import type { AlbumDetailSearch } from "@/routes/album.$albumId";
 import { ArrowRight } from "lucide-react";
 import heroImg from "@/assets/hero-angkor.jpg";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,35 @@ import {
 import { resolveImageUrl } from "@/lib/asset-resolver";
 import { HomeSlideshow } from "@/components/site/HomeSlideshow";
 
+export type HomeSearch = {
+  year?: number | "all" | undefined;
+  festival?: string | undefined;
+};
+
 export const Route = createFileRoute("/")({
+  validateSearch: (search: Record<string, unknown>): HomeSearch => {
+    const rawYear = search["year"];
+    let year: number | "all" | undefined = undefined;
+    if (typeof rawYear === "number" && !isNaN(rawYear)) {
+      year = rawYear;
+    } else if (typeof rawYear === "string") {
+      if (rawYear === "all") {
+        year = "all";
+      } else {
+        const parsed = parseInt(rawYear, 10);
+        if (!isNaN(parsed)) year = parsed;
+      }
+    }
+
+    const rawFestival = search["festival"];
+    const festival =
+      typeof rawFestival === "string" && rawFestival.trim() ? rawFestival.trim() : undefined;
+
+    return {
+      year,
+      festival,
+    };
+  },
   head: () => ({
     meta: [
       { title: "🏛️ បណ្ណសារវត្តពារាំង — រក្សាទុកអនុស្សាវរីយ៍ និងបុណ្យខ្មែរ | Wat Peareang Archive" },
@@ -27,17 +55,19 @@ export const Route = createFileRoute("/")({
         content:
           "បណ្ណសាររូបភាព និងអនុស្សាវរីយ៍បុណ្យខ្មែរនៃវត្តពារាំង រៀបចំតាមឆ្នាំ និងតាមព្រឹត្តិការណ៍ — ចូលឆ្នាំ វិសាខបូជា ភ្ជុំបិណ្ឌ អុំទូក និងច្រើនទៀត។ Wat Peareang Khmer Festival Photo Archive.",
       },
-      { property: "og:title", content: "🏛️ បណ្ណសារវត្តពារាំង — Wat Peareang Khmer Festival Photo Archive" },
+      {
+        property: "og:title",
+        content: "🏛️ បណ្ណសារវត្តពារាំង — Wat Peareang Khmer Festival Photo Archive",
+      },
       {
         property: "og:description",
-        content: "រក្សាទុកអនុស្សាវរីយ៍ និងរូបភាពបុណ្យខ្មែរនៃវត្តពារាំង តាមឆ្នាំ និងតាមព្រឹត្តិការណ៍។",
+        content:
+          "រក្សាទុកអនុស្សាវរីយ៍ និងរូបភាពបុណ្យខ្មែរនៃវត្តពារាំង តាមឆ្នាំ និងតាមព្រឹត្តិការណ៍។",
       },
       { property: "og:url", content: "https://wat-peareang-2027.onrender.com/" },
       { property: "og:image", content: "https://wat-peareang-2027.onrender.com/favicon.png" },
     ],
-    links: [
-      { rel: "canonical", href: "https://wat-peareang-2027.onrender.com/" },
-    ],
+    links: [{ rel: "canonical", href: "https://wat-peareang-2027.onrender.com/" }],
   }),
   component: Index,
 });
@@ -48,10 +78,54 @@ function Index() {
   const { data: allAlbums = [] } = useAlbums();
   const { data: archiveStats } = useArchiveStats();
   const { data: customHeroUrl } = useHomepageHero();
+  const search = Route.useSearch();
+  const navigate = Route.useNavigate();
 
-  const [year, setYear] = useState<number | "all">(2020);
-  const [selected, setSelected] = useState<string[]>([]);
+  const year = search.year ?? 2020;
+  const festival = search.festival;
+  const selected: string[] = festival ? [festival] : [];
   const shownYears = year === "all" ? years : [year];
+
+  const albumLinkSearch: AlbumDetailSearch = {
+    from: "home",
+    year,
+    festival,
+  };
+
+  const handleYearChange = (newYear: number | "all") => {
+    navigate({
+      search: {
+        year: newYear,
+        festival,
+      },
+      replace: true,
+      resetScroll: false,
+    });
+  };
+
+  const handleToggleFestival = (id: string) => {
+    const nextFestival = festival === id ? undefined : id;
+
+    navigate({
+      search: {
+        year: search.year,
+        festival: nextFestival,
+      },
+      replace: true,
+      resetScroll: false,
+    });
+  };
+
+  const handleClearFestival = () => {
+    navigate({
+      search: {
+        year: search.year,
+        festival: undefined,
+      },
+      replace: true,
+      resetScroll: false,
+    });
+  };
 
   const defaultMemoryId = "chaul-chnam-2020";
   const { data: memoryAlbum } = useAlbum(defaultMemoryId);
@@ -133,23 +207,26 @@ function Index() {
 
       {/* Filters */}
       <section className="mx-auto mt-10 max-w-[1400px] space-y-4 px-4 lg:px-8">
-        <YearPills value={year} onChange={setYear} />
+        <YearPills value={year} onChange={handleYearChange} />
         <FestivalPills
           selected={selected}
           activeYear={year}
-          onToggle={(id) =>
-            setSelected((prev) =>
-              prev.includes(id) ? [] : [id],
-            )
-          }
-          onClear={() => setSelected([])}
+          albumLinkSearch={albumLinkSearch}
+          onToggle={handleToggleFestival}
+          onClear={handleClearFestival}
         />
       </section>
 
       {/* Albums grouped by year */}
       <div className="mx-auto mt-12 max-w-[1400px] space-y-16 px-4 lg:px-8">
         {shownYears.map((y) => (
-          <YearSection key={y} year={y} festivalFilter={selected} albums={allAlbums} />
+          <YearSection
+            key={y}
+            year={y}
+            festivalFilter={selected}
+            albums={allAlbums}
+            albumLinkSearch={albumLinkSearch}
+          />
         ))}
       </div>
 
