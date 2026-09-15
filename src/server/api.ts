@@ -4448,6 +4448,12 @@ ${allUrls
       }
 
       const auth = await authenticateRequest(request);
+
+      // Exclude admin and super_admin from visitor page-view tracking
+      if (auth.user?.role === "admin" || auth.user?.role === "super_admin") {
+        return json({ success: true, recorded: false, deduplicated: true });
+      }
+
       const result = await db.recordView({
         resourceType: "page",
         resourceId: String(pathStr).trim(),
