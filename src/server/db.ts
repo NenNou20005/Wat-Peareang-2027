@@ -40,6 +40,7 @@ import {
   generatePostgresExportReport,
   validateHierarchyIntegrity,
   movePostgresAlbums,
+  copyPostgresAlbums,
   type AdminAnalyticsOverview,
   type ViewsSeriesPoint,
   type TopAlbumItem,
@@ -1890,6 +1891,196 @@ class Database {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការផ្លាស់ទី Album";
       return { success: false, movedCount: 0, error: msg };
+    }
+  }
+
+  public async copyAlbums(
+    params: {
+      sourceAlbumIds: string[];
+      targetParentAlbumId: string | null;
+      destinationFestivalId?: string | null;
+      destinationYear?: number | null;
+    },
+    user: User,
+  ): Promise<{
+    success: boolean;
+    copiedCount: number;
+    targetParentAlbumId?: string | null;
+    createdAlbums?: any[];
+    error?: string;
+  }> {
+    const drizzle = getDrizzleDb();
+
+    if (drizzle && isPostgresConfigured()) {
+      try {
+        const result = await copyPostgresAlbums(params);
+
+        // Sync in-memory state if loaded (preserve description from source)
+        if (Array.isArray(result.createdAlbums)) {
+          const sourceMap = new Map(this.data.albums.map((a) => [a.id, a]));
+          for (let i = 0; i < result.createdAlbums.length; i++) {
+            const ca = result.createdAlbums[i]!;
+            const sourceId = params.sourceAlbumIds[i];
+            const sourceAlb =
+              (sourceId ? sourceMap.get(sourceId) : undefined) ||
+              this.data.albums.find((a) => `${a.title} (ចម្លង)` === ca.title);
+
+            const description = (ca as any).description ?? sourceAlb?.description;
+            const location = (ca as any).location ?? sourceAlb?.location ?? "វត្តពារាំង";
+
+            (ca as any).description = description || undefined;
+            (ca as any).location = location;
+
+            this.data.albums.push({
+              id: ca.id,
+              festivalId: ca.festivalId,
+              year: ca.year,
+              parentAlbumId: ca.parentAlbumId || undefined,
+              title: ca.title,
+              description: description || undefined,
+              location: location,
+              photoCount: 0,
+              viewsCount: 0,
+              likesCount: 0,
+              status: "published",
+              sortOrder: ca.sortOrder,
+              createdAt: new Date().toISOString(),
+            });
+          }
+          this.save();
+        }
+
+        this.logActivity({
+          userId: user.id,
+          userName: user.name,
+          userRole: user.role,
+          action: "COPY_ALBUM",
+          resource: "ALBUM",
+          resourceId: result.targetParentAlbumId || "root",
+          details: `បានចម្លង ${result.copiedCount} Albums ទៅកាន់ ${result.targetParentAlbumId ? `Album #${result.targetParentAlbumId}` : "ថតធំ (Root)"}`,
+        });
+
+        return {
+          success: true,
+          copiedCount: result.copiedCount,
+          targetParentAlbumId: result.targetParentAlbumId,
+          createdAlbums: result.createdAlbums,
+        };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការចម្លង Album ក្នុង PostgreSQL។";
+        return { success: false, copiedCount: 0, error: msg };
+      }
+    }
+
+    // In-memory fallback
+    try {
+      const { sourceAlbumIds, targetParentAlbumId, destinationFestivalId, destinationYear } = params;
+      const uniqueIds = Array.from(new Set((sourceAlbumIds || []).filter(Boolean)));
+      if (uniqueIds.length === 0) return { success: false, copiedCount: 0, error: "គ្មាន Album សម្រាប់ចម្លងឡើយ" };
+
+      const sourceAlbums = this.data.albums.filter((a) => uniqueIds.includes(a.id));
+      if (sourceAlbums.length !== uniqueIds.length) {
+        return { success: false, copiedCount: 0, error: "រកមិនឃើញ Album មួយចំនួនឡើយ។" };
+      }
+
+      for (const alb of sourceAlbums) {
+        if (alb.status === "trashed") {
+          return { success: false, copiedCount: 0, error: `មិនអាចចម្លង Album «${alb.title}» ដែលស្ថិតក្នុងធុងសំរាមបានឡើយ។` };
+        }
+      }
+
+      let destFestivalId: string;
+      let destYear: number;
+
+      if (targetParentAlbumId) {
+        const targetParent = this.data.albums.find((a) => a.id === targetParentAlbumId);
+        if (!targetParent) return { success: false, copiedCount: 0, error: "រកមិនឃើញ Album គោលដៅឡើយ។" };
+        if (targetParent.status === "trashed") return { success: false, copiedCount: 0, error: "មិនអាចចម្លងទៅកាន់ Album ដែលស្ថិតក្នុងធុងសំរាមបានឡើយ។" };
+        destFestivalId = targetParent.festivalId;
+        destYear = targetParent.year;
+      } else {
+        destFestivalId = destinationFestivalId || sourceAlbums[0]!.festivalId;
+        destYear = destinationYear ? Number(destinationYear) : sourceAlbums[0]!.year;
+
+        // Fix 2: Verify that destination Festival exists in this.data.festivals
+        const festExists = this.data.festivals.some((f) => f.id === destFestivalId);
+        if (!festExists) {
+          return { success: false, copiedCount: 0, error: `រកមិនឃើញពិធីបុណ្យគោលដៅកូដ «${destFestivalId}» ក្នុងប្រព័ន្ធឡើយ (Destination festival not found)។` };
+        }
+      }
+
+      // Fix 3: Verify that destination Year exists in this.data.years. Do NOT create a Year automatically.
+      const yearExists = this.data.years.includes(destYear);
+      if (!yearExists) {
+        return { success: false, copiedCount: 0, error: `ឆ្នាំ ${destYear} មិនមាននៅក្នុងបញ្ជីឆ្នាំនៃបណ្ណសារឡើយ (Destination year ${destYear} does not exist)។` };
+      }
+
+      const existingInTarget = this.data.albums.filter((a) => {
+        if (a.status === "trashed") return false;
+        if (a.festivalId !== destFestivalId || a.year !== destYear) return false;
+        if (targetParentAlbumId) return a.parentAlbumId === targetParentAlbumId;
+        return !a.parentAlbumId;
+      });
+
+      let nextOrder = existingInTarget.reduce((max, a) => Math.max(max, a.sortOrder ?? -1), -1) + 1;
+
+      // Fix 4: Deterministic source ordering matching PostgreSQL: sortOrder ASC, createdAt ASC, id ASC
+      const sorted = [...sourceAlbums].sort((a, b) => {
+        const orderA = a.sortOrder ?? 0;
+        const orderB = b.sortOrder ?? 0;
+        if (orderA !== orderB) {
+          return orderA - orderB;
+        }
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        if (timeA !== timeB) {
+          return timeA - timeB;
+        }
+        return a.id.localeCompare(b.id);
+      });
+
+      const createdAlbums: any[] = [];
+      const nowIso = new Date().toISOString();
+
+      for (const alb of sorted) {
+        const newId = `${destFestivalId}-${destYear}-${Date.now().toString(36)}-${crypto.randomBytes(3).toString("hex")}`;
+        const newAlbum: StoredAlbum = {
+          id: newId,
+          festivalId: destFestivalId,
+          year: destYear,
+          parentAlbumId: targetParentAlbumId || undefined,
+          title: `${alb.title} (ចម្លង)`,
+          description: alb.description,
+          location: alb.location || "វត្តពារាំង",
+          coverImage: undefined, // Option A: coverImage is null/empty
+          photoCount: 0,        // Option A: photoCount = 0
+          viewsCount: 0,
+          likesCount: 0,
+          status: "published",
+          sortOrder: nextOrder++,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        this.data.albums.push(newAlbum);
+        createdAlbums.push(newAlbum);
+      }
+
+      this.save();
+
+      this.logActivity({
+        userId: user.id,
+        userName: user.name,
+        userRole: user.role,
+        action: "COPY_ALBUM",
+        resource: "ALBUM",
+        resourceId: targetParentAlbumId || "root",
+        details: `បានចម្លង ${createdAlbums.length} Albums ទៅកាន់ ${targetParentAlbumId ? `Album #${targetParentAlbumId}` : "ថតធំ (Root)"}`,
+      });
+
+      return { success: true, copiedCount: createdAlbums.length, targetParentAlbumId, createdAlbums };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការចម្លង Album";
+      return { success: false, copiedCount: 0, error: msg };
     }
   }
 

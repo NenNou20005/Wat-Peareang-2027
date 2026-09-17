@@ -1404,6 +1404,80 @@ ${allUrls
       }
     }
 
+    // POST /api/admin/albums/paste
+    if (pathname === "/api/admin/albums/paste" && method === "POST") {
+      try {
+        const body = await request.json();
+        const { sourceAlbumIds, albumIds, targetParentAlbumId, destinationFestivalId, destinationYear } = body;
+        const rawIds = Array.isArray(sourceAlbumIds)
+          ? sourceAlbumIds
+          : Array.isArray(albumIds)
+            ? albumIds
+            : [];
+        const targetIds: string[] = rawIds
+          .filter((id): id is string => typeof id === "string")
+          .map((id) => id.trim())
+          .filter((id) => id.length > 0);
+
+        if (targetIds.length === 0) {
+          return json({ success: false, error: "សូមជ្រើសរើស Album យ៉ាងហោចណាស់មួយដើម្បីចម្លង" }, 400);
+        }
+
+        const cleanTargetParentId =
+          typeof targetParentAlbumId === "string" && targetParentAlbumId.trim() !== ""
+            ? targetParentAlbumId.trim()
+            : null;
+
+        const cleanDestinationFestivalId =
+          typeof destinationFestivalId === "string" && destinationFestivalId.trim() !== ""
+            ? destinationFestivalId.trim()
+            : null;
+
+        const cleanDestinationYear =
+          destinationYear !== undefined && destinationYear !== null && !isNaN(Number(destinationYear))
+            ? Number(destinationYear)
+            : null;
+
+        const result = await db.copyAlbums(
+          {
+            sourceAlbumIds: targetIds,
+            targetParentAlbumId: cleanTargetParentId,
+            destinationFestivalId: cleanDestinationFestivalId,
+            destinationYear: cleanDestinationYear,
+          },
+          currentUser,
+        );
+
+        if (!result.success) {
+          const rawError = result.error || "";
+          const isSafeValidation =
+            typeof rawError === "string" &&
+            /[\u1780-\u17FF]/.test(rawError) &&
+            !/(?:postgres|sql|select|insert|update|delete|drizzle|column|table|relation|connection|econnrefused|password|secret|fatal)/i.test(rawError);
+          const clientError = isSafeValidation ? rawError : "មានបញ្ហាក្នុងការចម្លង Album។ សូមព្យាយាមម្តងទៀត។";
+          return json({ success: false, error: clientError }, 400);
+        }
+
+        return json(
+          {
+            success: true,
+            message: `បានចម្លង ${result.copiedCount} Album ដោយជោគជ័យ`,
+            data: result,
+          },
+          201,
+        );
+      } catch (err: unknown) {
+        logger.error("Failed to copy/paste albums", { error: err });
+        const rawMsg = err instanceof Error ? err.message : "";
+        const isSafeValidation =
+          typeof rawMsg === "string" &&
+          /[\u1780-\u17FF]/.test(rawMsg) &&
+          !/(?:postgres|sql|select|insert|update|delete|drizzle|column|table|relation|connection|econnrefused|password|secret|fatal)/i.test(rawMsg);
+        const safeError = isSafeValidation ? rawMsg : "មានបញ្ហាក្នុងការចម្លង Album។ សូមព្យាយាមម្តងទៀត។";
+        return json({ success: false, error: safeError }, 400);
+      }
+    }
+
     // POST /api/admin/albums
     if (pathname === "/api/admin/albums" && method === "POST") {
       try {

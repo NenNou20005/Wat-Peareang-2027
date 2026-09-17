@@ -21,6 +21,8 @@ import {
   CheckSquare,
   Square,
   FolderInput,
+  Copy,
+  Clipboard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,6 +45,7 @@ import {
   useDeleteAlbum,
   useReorderAlbums,
   useMoveAlbums,
+  useCopyAlbums,
   type AdminAlbum,
 } from "@/hooks/useAdminData";
 import { useAlbumPhotos } from "@/hooks/useArchiveData";
@@ -483,6 +486,176 @@ function AdminAlbumsPage() {
     }
   };
 
+  // Copy / Paste Clipboard State (Stored in sessionStorage for explorer-like UX)
+  const CLIPBOARD_STORAGE_KEY = "wat_peareang_album_clipboard";
+
+  const [clipboard, setClipboard] = useState<{
+    sourceAlbumIds: string[];
+    sourceTitles: string[];
+    sourceFestivalId: string;
+    sourceYear: number;
+    timestamp: number;
+  } | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      const stored = sessionStorage.getItem(CLIPBOARD_STORAGE_KEY);
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const updateClipboard = (data: {
+    sourceAlbumIds: string[];
+    sourceTitles: string[];
+    sourceFestivalId: string;
+    sourceYear: number;
+    timestamp: number;
+  } | null) => {
+    setClipboard(data);
+    if (typeof window !== "undefined") {
+      try {
+        if (data) {
+          sessionStorage.setItem(CLIPBOARD_STORAGE_KEY, JSON.stringify(data));
+        } else {
+          sessionStorage.removeItem(CLIPBOARD_STORAGE_KEY);
+        }
+      } catch (e) {
+        console.warn("Failed to update sessionStorage clipboard:", e);
+      }
+    }
+  };
+
+  const copyAlbumsMutation = useCopyAlbums();
+  const [isPasteOpen, setIsPasteOpen] = useState(false);
+  const [pasteTargetParentId, setPasteTargetParentId] = useState<string | null>(null);
+
+  const pasteDestFestivalId =
+    selectedFestival !== "all" ? selectedFestival : clipboard?.sourceFestivalId;
+  const pasteDestYear =
+    selectedYear !== "all" ? Number(selectedYear) : clipboard?.sourceYear;
+
+  const isDestValid = Boolean(
+    pasteDestFestivalId &&
+      pasteDestFestivalId !== "all" &&
+      pasteDestYear !== undefined &&
+      !isNaN(pasteDestYear),
+  );
+
+  // Unpaginated query for paste destination candidate parents (up to 1000 albums in target festival/year)
+  const { data: pasteDestinationData, isLoading: isPasteDestinationLoading } = useAdminAlbums(
+    isDestValid
+      ? {
+          festivalId: pasteDestFestivalId,
+          year: pasteDestYear,
+          limit: 1000,
+        }
+      : undefined,
+  );
+
+  const candidatePasteParents = useMemo(() => {
+    if (!clipboard || clipboard.sourceAlbumIds.length === 0) return [];
+    const sourceSet = new Set(clipboard.sourceAlbumIds);
+
+    const pool = pasteDestinationData ? pasteDestinationData.albums : fetchedAlbums;
+
+    return pool.filter((cand) => {
+      // Must not be trashed
+      if (cand.status === "trashed") return false;
+      // Do not allow any source album to appear as candidate parent
+      if (sourceSet.has(cand.id)) return false;
+      // Destination scope matching
+      if (pasteDestFestivalId && cand.festivalId !== pasteDestFestivalId) return false;
+      if (pasteDestYear && cand.year !== pasteDestYear) return false;
+      return true;
+    });
+  }, [
+    clipboard,
+    pasteDestinationData,
+    fetchedAlbums,
+    pasteDestFestivalId,
+    pasteDestYear,
+  ]);
+
+  const handleCopySingle = (album: AdminAlbum) => {
+    const data = {
+      sourceAlbumIds: [album.id],
+      sourceTitles: [album.title],
+      sourceFestivalId: album.festivalId,
+      sourceYear: album.year,
+      timestamp: Date.now(),
+    };
+    updateClipboard(data);
+    toast.success(`បានចម្លង Album «${album.title}» ទៅកាន់ Clipboard (Copy)`);
+  };
+
+  const handleCopySelected = () => {
+    const selectedList = localAlbums.filter((a) => selectedIds.has(a.id));
+    if (selectedList.length === 0) return;
+    const data = {
+      sourceAlbumIds: selectedList.map((a) => a.id),
+      sourceTitles: selectedList.map((a) => a.title),
+      sourceFestivalId: selectedList[0]!.festivalId,
+      sourceYear: selectedList[0]!.year,
+      timestamp: Date.now(),
+    };
+    updateClipboard(data);
+    toast.success(`បានចម្លង ${toKhmerNumber(selectedList.length)} Albums ទៅកាន់ Clipboard (Copy)`);
+    setSelectedIds(new Set());
+  };
+
+  const handleClearClipboard = () => {
+    updateClipboard(null);
+    toast.info("បានសម្អាត Clipboard រួចរាល់");
+  };
+
+  const openPasteModal = (targetParentId: string | null = null) => {
+    if (!clipboard || clipboard.sourceAlbumIds.length === 0) {
+      toast.error("គ្មាន Album ក្នុង Clipboard សម្រាប់បិទភ្ជាប់ (Paste) ឡើយ");
+      return;
+    }
+    setPasteTargetParentId(targetParentId);
+    const sourceSet = new Set(clipboard.sourceAlbumIds);
+    const safeTargetParentId =
+      targetParentId && !sourceSet.has(targetParentId) ? targetParentId : null;
+    setPasteTargetParentId(safeTargetParentId);
+    setIsPasteOpen(true);
+  };
+
+  const handleExecutePaste = async () => {
+    if (!clipboard || clipboard.sourceAlbumIds.length === 0) return;
+    if (pasteTargetParentId && clipboard.sourceAlbumIds.includes(pasteTargetParentId)) {
+      toast.error("មិនអាចបិទភ្ជាប់ Album ចូលទៅក្នុងខ្លួនវាបានឡើយ");
+      return;
+    }
+    try {
+      const res = await copyAlbumsMutation.mutateAsync({
+        sourceAlbumIds: clipboard.sourceAlbumIds,
+        targetParentAlbumId: pasteTargetParentId,
+        destinationFestivalId: selectedFestival !== "all" ? selectedFestival : clipboard.sourceFestivalId,
+        destinationYear: selectedYear !== "all" ? Number(selectedYear) : clipboard.sourceYear,
+      });
+
+      const targetTitle = pasteTargetParentId
+        ? candidatePasteParents.find((a) => a.id === pasteTargetParentId)?.title ||
+          localAlbums.find((a) => a.id === pasteTargetParentId)?.title ||
+          "Album មេ"
+        : "កម្រិត Root (ថតចម្បង)";
+
+      toast.success(
+        res.copiedCount === 1
+          ? `បានបិទភ្ជាប់ (Paste) Album ទៅកាន់ «${targetTitle}» ជោគជ័យ!`
+          : `បានបិទភ្ជាប់ ${toKhmerNumber(res.copiedCount)} Albums ទៅកាន់ «${targetTitle}» ជោគជ័យ!`,
+      );
+
+      setIsPasteOpen(false);
+      updateClipboard(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការបិទភ្ជាប់ Album";
+      toast.error(msg);
+    }
+  };
+
   // Modals
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editingAlbum, setEditingAlbum] = useState<AdminAlbum | null>(null);
@@ -700,6 +873,18 @@ function AdminAlbumsPage() {
                 </Button>
               )}
 
+              {selectedIds.size > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopySelected}
+                  className="h-8 rounded-full text-xs border-blue-500/60 text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 font-medium"
+                >
+                  <Copy className="mr-1.5 h-3.5 w-3.5" /> ចម្លង ({toKhmerNumber(selectedIds.size)})
+                </Button>
+              )}
+
               {hasOrderChanged && (
                 <span className="rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 px-2.5 py-0.5 text-xs font-medium">
                   ● មានការកែប្រែលំដាប់មិនទាន់រក្សាទុក
@@ -779,6 +964,44 @@ function AdminAlbumsPage() {
             <span>
               ដើម្បីរៀបលំដាប់ Albums (Move Up / Down) សូមជ្រើសរើស <strong>ពិធីបុណ្យ</strong> និង <strong>ឆ្នាំ</strong> ជាក់លាក់មួយនៅក្នុង Filter ខាងលើ។
             </span>
+          </div>
+        )}
+
+        {/* Active Clipboard Dock / Banner */}
+        {clipboard && clipboard.sourceAlbumIds.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-500/30 bg-blue-500/10 p-3.5 text-xs text-foreground shadow-sm">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-500/20 text-blue-600 dark:text-blue-400">
+                <Clipboard className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="font-semibold text-blue-700 dark:text-blue-300">
+                  Clipboard: បានចម្លង {toKhmerNumber(clipboard.sourceAlbumIds.length)} Album{clipboard.sourceAlbumIds.length > 1 ? "s" : ""}
+                </p>
+                <p className="text-[11px] text-muted-foreground line-clamp-1">
+                  «{clipboard.sourceTitles.slice(0, 2).join("», «")}»{clipboard.sourceTitles.length > 2 ? ` និង ${toKhmerNumber(clipboard.sourceTitles.length - 2)} ផ្សេងទៀត` : ""}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => openPasteModal(null)}
+                className="h-8 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-soft text-xs"
+              >
+                <Copy className="mr-1.5 h-3.5 w-3.5" /> បិទភ្ជាប់ (Paste)
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={handleClearClipboard}
+                className="h-8 rounded-full text-xs text-muted-foreground hover:text-foreground"
+              >
+                សម្អាត (Clear)
+              </Button>
+            </div>
           </div>
         )}
 
@@ -952,6 +1175,16 @@ function AdminAlbumsPage() {
                         className="h-8 w-8 rounded-xl text-muted-foreground hover:text-gold hover:bg-gold/10"
                       >
                         <FolderInput className="h-3.5 w-3.5" />
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleCopySingle(album)}
+                        title="ចម្លង Album (Copy)"
+                        className="h-8 w-8 rounded-xl text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
                       </Button>
 
                       <Button
@@ -1365,6 +1598,174 @@ function AdminAlbumsPage() {
                 </Button>
               </DialogFooter>
             </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal: Paste Album(s) */}
+        <Dialog open={isPasteOpen} onOpenChange={setIsPasteOpen}>
+          <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto rounded-3xl p-6 shadow-card">
+            <DialogHeader>
+              <DialogTitle className="font-display text-lg font-bold flex items-center gap-2 text-blue-600 dark:text-blue-400">
+                <Copy className="h-5 w-5" />
+                <span>បិទភ្ជាប់ Album (Paste)</span>
+              </DialogTitle>
+            </DialogHeader>
+
+            {clipboard && (
+              <div className="space-y-4 pt-2">
+                {/* Items being pasted summary */}
+                <div className="rounded-2xl border border-blue-500/30 bg-blue-500/10 p-3 text-xs space-y-1.5">
+                  <div className="font-semibold text-foreground flex items-center justify-between">
+                    <span>Album ដែលត្រូវចម្លង៖</span>
+                    <span className="font-bold text-blue-600 dark:text-blue-400">
+                      {toKhmerNumber(clipboard.sourceAlbumIds.length)} Albums
+                    </span>
+                  </div>
+                  <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
+                    {clipboard.sourceTitles.map((title, idx) => (
+                      <div
+                        key={idx}
+                        className="truncate rounded-md bg-background/80 px-2 py-1 text-[11px] border border-border/50 text-foreground"
+                      >
+                        📋 {title}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Destination info */}
+                <div className="rounded-xl border border-border/60 bg-muted/20 p-2.5 text-xs text-muted-foreground">
+                  <div>
+                    គោលដៅ៖ ពិធីបុណ្យ <strong>{festivals.find((f) => f.id === (selectedFestival !== "all" ? selectedFestival : clipboard.sourceFestivalId))?.name || (selectedFestival !== "all" ? selectedFestival : clipboard.sourceFestivalId)}</strong>, ឆ្នាំ <strong>{selectedYear !== "all" ? selectedYear : clipboard.sourceYear}</strong>
+                  </div>
+                </div>
+
+                {/* Destination parent selection */}
+                <div className="space-y-2">
+                  <Label className="text-xs font-semibold text-foreground">
+                    ជ្រើសរើសទីតាំងដាក់ Album ចម្លង៖
+                  </Label>
+
+                  {/* Option 1: Root Album */}
+                  <button
+                    type="button"
+                    onClick={() => setPasteTargetParentId(null)}
+                    className={cn(
+                      "w-full flex items-center justify-between p-3 rounded-2xl border text-left transition-all cursor-pointer",
+                      pasteTargetParentId === null
+                        ? "border-blue-500 bg-blue-500/10 ring-2 ring-blue-500/40 shadow-xs"
+                        : "border-border/80 bg-card hover:bg-secondary/40",
+                    )}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-lg">🏠</span>
+                      <div>
+                        <div className="font-semibold text-xs text-foreground">
+                          កម្រិត Root (ថតចម្បង / No Parent)
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          ដាក់ជា Album កម្រិតខ្ពស់បំផុត (គ្មាន Album មេ)
+                        </div>
+                      </div>
+                    </div>
+                    {pasteTargetParentId === null && (
+                      <div className="rounded-full bg-blue-600 text-white p-1 shadow-xs">
+                        <Check className="h-3 w-3 stroke-[3]" />
+                      </div>
+                    )}
+                  </button>
+
+                  {/* Option 2: Candidate Parent Album Selection */}
+                  <div className="space-y-1.5 pt-1">
+                    <Label className="text-[11px] text-muted-foreground">
+                      ឬជ្រើសរើសដាក់ចូលក្នុង Album មេណាមួយ (Sub-album) ៖
+                    </Label>
+
+                    {isPasteDestinationLoading && candidatePasteParents.length === 0 ? (
+                      <div className="flex items-center justify-center p-4 text-xs text-muted-foreground">
+                        <RefreshCw className="mr-2 h-4 w-4 animate-spin text-blue-500" />
+                        កំពុងទាញយកបញ្ជី Album...
+                      </div>
+                    ) : candidatePasteParents.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground p-3 rounded-xl border border-dashed border-border bg-card/40 text-center">
+                        គ្មាន Album ក្នុងឆ្នាំ និងបុណ្យនេះដែលអាចជ្រើសជាមេបានឡើយ (នឹងដាក់នៅ Root)។
+                      </p>
+                    ) : (
+                      <div className="max-h-52 overflow-y-auto space-y-1.5 p-1 rounded-2xl border border-border/70 bg-background/50">
+                        {candidatePasteParents.map((cand) => {
+                          const isTarget = pasteTargetParentId === cand.id;
+                          return (
+                            <button
+                              key={cand.id}
+                              type="button"
+                              onClick={() => setPasteTargetParentId(cand.id)}
+                              className={cn(
+                                "w-full flex items-center justify-between p-2.5 rounded-xl border text-left transition-all cursor-pointer",
+                                isTarget
+                                  ? "border-blue-500 bg-blue-500/15 ring-2 ring-blue-500/40 shadow-xs"
+                                  : "border-border/60 bg-card hover:bg-secondary/60",
+                              )}
+                            >
+                              <div className="flex items-center gap-2 min-w-0 pr-2">
+                                <span className="text-base shrink-0">📁</span>
+                                <div className="min-w-0">
+                                  <div className="font-semibold text-xs text-foreground truncate">
+                                    {cand.title}
+                                  </div>
+                                  <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                                    <span>{toKhmerNumber(cand.photoCount)} រូប</span>
+                                    {cand.parentAlbumId && (
+                                      <span className="text-blue-500 font-medium">↳ Sub-album</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              {isTarget && (
+                                <div className="shrink-0 rounded-full bg-blue-600 text-white p-1 shadow-xs">
+                                  <Check className="h-3 w-3 stroke-[3]" />
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Option A Structure note */}
+                <p className="text-[10px] text-muted-foreground bg-muted/40 p-2.5 rounded-xl border border-border/40">
+                  ℹ️ ការចម្លង (Option A) នឹងចម្លងរចនាសម្ព័ន្ធ និងព័ត៌មាន Album (Title «... (ចម្លង)», Description, Location)។ Album ថ្មីនឹងចាប់ផ្ដើមដោយគ្មានរូបថត (0 រូប) ដើម្បីសុវត្ថិភាពទិន្នន័យរូបភាពដើម។
+                </p>
+
+                <DialogFooter className="mt-5 flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setIsPasteOpen(false)}
+                    className="rounded-full h-9 text-xs"
+                  >
+                    បោះបង់
+                  </Button>
+                  <Button
+                    type="button"
+                    disabled={copyAlbumsMutation.isPending || clipboard.sourceAlbumIds.length === 0}
+                    onClick={handleExecutePaste}
+                    className="rounded-full bg-blue-600 hover:bg-blue-700 text-white h-9 text-xs font-medium px-5"
+                  >
+                    {copyAlbumsMutation.isPending ? (
+                      <>
+                        <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> កំពុងបិទភ្ជាប់...
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="mr-1.5 h-3.5 w-3.5" /> បញ្ជាក់ការបិទភ្ជាប់ (Paste)
+                      </>
+                    )}
+                  </Button>
+                </DialogFooter>
+              </div>
+            )}
           </DialogContent>
         </Dialog>
       </div>

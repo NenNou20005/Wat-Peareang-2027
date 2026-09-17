@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { getDrizzleDb, isPostgresConfigured } from "../db/index.ts";
 import * as schema from "../db/schema.ts";
 import { eq, and, desc, asc, sql, ilike, or, gte, lte, inArray, notInArray, ne, isNull, notLike } from "drizzle-orm";
@@ -6906,6 +6907,317 @@ export async function movePostgresAlbums(params: {
       success: true,
       movedCount: sortedSourceAlbums.length,
       targetParentAlbumId: cleanTargetParentId,
+    };
+  });
+}
+
+/**
+ * Admin: Copy one or more albums into Root (null) or into a target Parent Album.
+ * Option A: Copies album structure and metadata ONLY.
+ * - photoCount = 0
+ * - coverImage = null
+ * - viewsCount = 0, likesCount = 0
+ * - Does NOT create any rows in schema.images
+ * - Does NOT call any R2 storage operations
+ * - Assigns newly generated unique ID for each copied album
+ * - Appends sequentially after target scope MAX(sort_order)
+ * - Preserves relative order of multi-selected source albums
+ * - Validates source and target (rejects trashed albums, ensures festival/year validity)
+ */
+export async function copyPostgresAlbums(params: {
+  sourceAlbumIds: string[];
+  targetParentAlbumId: string | null;
+  destinationFestivalId?: string | null;
+  destinationYear?: number | null;
+}): Promise<{
+  success: boolean;
+  copiedCount: number;
+  targetParentAlbumId: string | null;
+  destinationFestivalId: string;
+  destinationYear: number;
+  createdAlbums: Array<{
+    id: string;
+    title: string;
+    festivalId: string;
+    year: number;
+    parentAlbumId: string | null;
+    sortOrder: number;
+    photoCount: number;
+  }>;
+}> {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) {
+    throw new Error("Database connection is not configured.");
+  }
+
+  const { sourceAlbumIds, targetParentAlbumId, destinationFestivalId, destinationYear } = params;
+  if (!Array.isArray(sourceAlbumIds) || sourceAlbumIds.length === 0) {
+    throw new Error("Invalid parameters: sourceAlbumIds must be a non-empty array.");
+  }
+
+  // Deduplicate source IDs
+  const uniqueIds = Array.from(new Set(sourceAlbumIds.map((id) => (id ? id.trim() : "")).filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    throw new Error("Invalid parameters: no valid album IDs provided.");
+  }
+
+  const cleanTargetParentId =
+    targetParentAlbumId && typeof targetParentAlbumId === "string" && targetParentAlbumId.trim() !== ""
+      ? targetParentAlbumId.trim()
+      : null;
+
+  return await db.transaction(async (tx) => {
+    // 1. Fetch all source albums with createdAt for deterministic ordering
+    const sourceAlbums = await tx
+      .select({
+        id: schema.albums.id,
+        festivalId: schema.albums.festivalId,
+        year: schema.albums.year,
+        eventId: schema.albums.eventId,
+        title: schema.albums.title,
+        description: schema.albums.description,
+        location: schema.albums.location,
+        status: schema.albums.status,
+        sortOrder: schema.albums.sortOrder,
+        createdAt: schema.albums.createdAt,
+      })
+      .from(schema.albums)
+      .where(inArray(schema.albums.id, uniqueIds));
+
+    if (sourceAlbums.length !== uniqueIds.length) {
+      throw new Error("រកមិនឃើញ Album មួយចំនួនដែលត្រូវចម្លងក្នុងប្រព័ន្ធទិន្នន័យឡើយ (One or more source albums not found)។");
+    }
+
+    // 2. Reject trashed source albums
+    for (const alb of sourceAlbums) {
+      if (alb.status === "trashed") {
+        throw new Error(`មិនអាចចម្លង Album «${alb.title}» ដែលស្ថិតក្នុងធុងសំរាមបានឡើយ (Cannot copy trashed album)។`);
+      }
+    }
+
+    // 3. Resolve destination festivalId and year
+    let destFestivalId: string;
+    let destYear: number;
+    let targetParentAlbum: {
+      id: string;
+      festivalId: string;
+      year: number;
+      eventId: string | null;
+      title: string;
+      status: string;
+    } | null = null;
+
+    if (cleanTargetParentId) {
+      const [targetParent] = await tx
+        .select({
+          id: schema.albums.id,
+          festivalId: schema.albums.festivalId,
+          year: schema.albums.year,
+          eventId: schema.albums.eventId,
+          title: schema.albums.title,
+          status: schema.albums.status,
+        })
+        .from(schema.albums)
+        .where(eq(schema.albums.id, cleanTargetParentId))
+        .limit(1);
+
+      if (!targetParent) {
+        throw new Error(`រកមិនឃើញ Album គោលដៅ ID "${cleanTargetParentId}" នៅក្នុងប្រព័ន្ធឡើយ (Target parent not found)។`);
+      }
+      if (targetParent.status === "trashed") {
+        throw new Error(`មិនអាចចម្លងទៅកាន់ Album គោលដៅ «${targetParent.title}» ដែលស្ថិតក្នុងធុងសំរាមបានឡើយ (Target parent is trashed)។`);
+      }
+
+      targetParentAlbum = targetParent;
+      destFestivalId = targetParent.festivalId;
+      destYear = targetParent.year;
+    } else {
+      // Pasting into Root
+      destFestivalId =
+        destinationFestivalId && destinationFestivalId.trim()
+          ? destinationFestivalId.trim()
+          : sourceAlbums[0]!.festivalId;
+      destYear =
+        destinationYear && !isNaN(Number(destinationYear))
+          ? Number(destinationYear)
+          : sourceAlbums[0]!.year;
+
+      // Verify destination festival exists
+      const [fest] = await tx
+        .select({ id: schema.festivals.id })
+        .from(schema.festivals)
+        .where(eq(schema.festivals.id, destFestivalId))
+        .limit(1);
+
+      if (!fest) {
+        throw new Error(`រកមិនឃើញពិធីបុណ្យគោលដៅកូដ «${destFestivalId}» ក្នុងប្រព័ន្ធឡើយ (Destination festival not found)។`);
+      }
+    }
+
+    // Verify that destinationYear exists in schema.years; do NOT create a new Year record
+    const [yearRow] = await tx
+      .select({ year: schema.years.year })
+      .from(schema.years)
+      .where(eq(schema.years.year, destYear))
+      .limit(1);
+
+    if (!yearRow) {
+      throw new Error(`ឆ្នាំ ${destYear} មិនមាននៅក្នុងបញ្ជីឆ្នាំនៃបណ្ណសារឡើយ (Destination year ${destYear} does not exist)។`);
+    }
+
+    // Validate event integrity for destination festival and year
+    const validDestEvents = await tx
+      .select({ id: schema.events.id })
+      .from(schema.events)
+      .where(
+        and(
+          eq(schema.events.festivalId, destFestivalId),
+          eq(schema.events.year, destYear),
+        ),
+      );
+    const validDestEventIdSet = new Set(validDestEvents.map((e) => e.id));
+
+    // 4. Calculate sort_order in target scope
+    const targetScopeCondition = cleanTargetParentId
+      ? and(
+          eq(schema.albums.festivalId, destFestivalId),
+          eq(schema.albums.year, destYear),
+          eq(schema.albums.parentAlbumId, cleanTargetParentId),
+          ne(schema.albums.status, "trashed"),
+        )
+      : and(
+          eq(schema.albums.festivalId, destFestivalId),
+          eq(schema.albums.year, destYear),
+          isNull(schema.albums.parentAlbumId),
+          ne(schema.albums.status, "trashed"),
+        );
+
+    const [maxOrderRow] = await tx
+      .select({ maxOrder: sql<number>`COALESCE(MAX(${schema.albums.sortOrder}), -1)` })
+      .from(schema.albums)
+      .where(targetScopeCondition);
+
+    let nextSortOrder = Number(maxOrderRow?.maxOrder ?? -1) + 1;
+
+    // 5. Preserve relative order deterministically (sortOrder ASC, then createdAt ASC, then id ASC)
+    const sortedSourceAlbums = [...sourceAlbums].sort((a, b) => {
+      const orderA = a.sortOrder ?? 0;
+      const orderB = b.sortOrder ?? 0;
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      if (timeA !== timeB) {
+        return timeA - timeB;
+      }
+      return a.id.localeCompare(b.id);
+    });
+
+    // Collision-safe ID generation with database existence check and retry within transaction
+    const generatedIdsInBatch = new Set<string>();
+    async function generateUniqueAlbumId(festivalId: string, year: number): Promise<string> {
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const randomSuffix = crypto.randomBytes(3 + attempt).toString("hex");
+        const candidateId = `${festivalId}-${year}-${Date.now().toString(36)}-${randomSuffix}`;
+
+        if (generatedIdsInBatch.has(candidateId)) {
+          continue;
+        }
+
+        const [existing] = await tx
+          .select({ id: schema.albums.id })
+          .from(schema.albums)
+          .where(eq(schema.albums.id, candidateId))
+          .limit(1);
+
+        if (!existing) {
+          generatedIdsInBatch.add(candidateId);
+          return candidateId;
+        }
+      }
+
+      const fallbackId = `${festivalId}-${year}-${crypto.randomUUID()}`;
+      generatedIdsInBatch.add(fallbackId);
+      return fallbackId;
+    }
+
+    // 6. Insert new copied albums (Option A: structure and metadata ONLY, coverImage = null, photoCount = 0)
+    const now = new Date();
+    const createdAlbums: Array<{
+      id: string;
+      title: string;
+      festivalId: string;
+      year: number;
+      parentAlbumId: string | null;
+      sortOrder: number;
+      photoCount: number;
+    }> = [];
+
+    for (const alb of sortedSourceAlbums) {
+      const newId = await generateUniqueAlbumId(destFestivalId, destYear);
+      const newTitle = `${alb.title} (ចម្លង)`;
+      const newSortOrder = nextSortOrder++;
+
+      // Resolve eventId ensuring compatibility with destination hierarchy rules
+      let resolvedEventId: string | null = null;
+      if (targetParentAlbum) {
+        if (targetParentAlbum.eventId) {
+          resolvedEventId = targetParentAlbum.eventId;
+        } else {
+          if (alb.eventId && validDestEventIdSet.has(alb.eventId)) {
+            resolvedEventId = alb.eventId;
+          } else {
+            resolvedEventId = null;
+          }
+        }
+      } else {
+        if (alb.eventId && validDestEventIdSet.has(alb.eventId)) {
+          resolvedEventId = alb.eventId;
+        } else {
+          resolvedEventId = null;
+        }
+      }
+
+      const newAlbumRecord = {
+        id: newId,
+        festivalId: destFestivalId,
+        year: destYear,
+        eventId: resolvedEventId,
+        parentAlbumId: cleanTargetParentId,
+        title: newTitle,
+        description: alb.description || null,
+        location: alb.location || "វត្តពារាំង",
+        coverImage: null,
+        photoCount: 0,
+        viewsCount: 0,
+        likesCount: 0,
+        status: "published",
+        sortOrder: newSortOrder,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await tx.insert(schema.albums).values(newAlbumRecord);
+
+      createdAlbums.push({
+        id: newId,
+        title: newTitle,
+        festivalId: destFestivalId,
+        year: destYear,
+        parentAlbumId: cleanTargetParentId,
+        sortOrder: newSortOrder,
+        photoCount: 0,
+      });
+    }
+
+    return {
+      success: true,
+      copiedCount: createdAlbums.length,
+      targetParentAlbumId: cleanTargetParentId,
+      destinationFestivalId: destFestivalId,
+      destinationYear: destYear,
+      createdAlbums,
     };
   });
 }

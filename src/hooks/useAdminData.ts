@@ -1323,3 +1323,32 @@ export function useMoveAlbums() {
   });
 }
 
+export function useCopyAlbums() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      sourceAlbumIds: string[];
+      targetParentAlbumId: string | null;
+      destinationFestivalId?: string | null;
+      destinationYear?: number | null;
+    }) => {
+      const res = await fetch("/api/admin/albums/paste", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to copy/paste albums");
+      }
+      return json;
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["admin", "albums"] }),
+        queryClient.invalidateQueries({ queryKey: ["archive", "albums"] }),
+        queryClient.invalidateQueries({ queryKey: ["archive", "events"] }),
+      ]);
+    },
+  });
+}
