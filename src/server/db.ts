@@ -2025,7 +2025,41 @@ class Database {
   }
 
   public async trashImage(id: string, user: User): Promise<{ success: boolean; error?: string }> {
-    const img = this.data.images.find((i) => i.id === id);
+    let img = this.data.images.find((i) => i.id === id);
+
+    // Fallback to PostgreSQL if image record is not cached in memory
+    const drizzle = getDrizzleDb();
+    if (!img && drizzle) {
+      try {
+        const [pgRow] = await drizzle
+          .select()
+          .from(schema.images)
+          .where(eq(schema.images.id, id))
+          .limit(1);
+
+        if (pgRow) {
+          img = {
+            id: pgRow.id,
+            albumId: pgRow.albumId,
+            title: pgRow.title,
+            description: pgRow.description || undefined,
+            url: pgRow.url,
+            thumbnailUrl: pgRow.thumbnailUrl || undefined,
+            size: pgRow.size,
+            mimeType: pgRow.mimeType,
+            photographer: pgRow.photographer || undefined,
+            uploadedBy: pgRow.uploadedBy || user.id,
+            status: "trashed",
+            createdAt: pgRow.createdAt
+              ? new Date(pgRow.createdAt).toISOString()
+              : new Date().toISOString(),
+          };
+        }
+      } catch (dbLookupErr) {
+        console.warn(`[trashImage]: PostgreSQL fallback lookup error for image ${id}:`, dbLookupErr);
+      }
+    }
+
     if (!img) return { success: false, error: "រកមិនឃើញរូបភាពនេះទេ។" };
 
     img.status = "trashed";
@@ -2038,9 +2072,12 @@ class Database {
       resourceId: id,
       details: `បានផ្លាស់ទីរូបភាព ${img.title} ទៅកាន់ធុងសំរាម`,
     });
-    this.save();
 
-    const drizzle = getDrizzleDb();
+    const existsInMemory = this.data.images.some((i) => i.id === id);
+    if (existsInMemory) {
+      this.save();
+    }
+
     if (drizzle) {
       await drizzle
         .update(schema.images)

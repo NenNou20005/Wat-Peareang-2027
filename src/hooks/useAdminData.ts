@@ -835,6 +835,7 @@ export function useTrashImage() {
         queryClient.invalidateQueries({ queryKey: adminKeys.trash() }),
         queryClient.invalidateQueries({ queryKey: adminKeys.dashboard() }),
         queryClient.invalidateQueries({ queryKey: ["archive", "images"] }),
+        queryClient.invalidateQueries({ queryKey: ["archive", "album"] }),
         queryClient.invalidateQueries({ queryKey: ["archive", "slideshow-albums"] }),
         queryClient.invalidateQueries({ queryKey: ["archive", "albums"] }),
         queryClient.invalidateQueries({ queryKey: ["archive", "stats"] }),
