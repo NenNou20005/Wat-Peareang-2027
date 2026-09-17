@@ -190,6 +190,7 @@ export type Album = {
   description?: string | null | undefined;
   coverImage?: string | null | undefined;
   sortOrder?: number | undefined;
+  parentAlbumId?: string | null | undefined;
 };
 
 export const sampleImages = festivals.map((f) => f.cover);

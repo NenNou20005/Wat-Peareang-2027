@@ -20,6 +20,7 @@ import {
   Save,
   CheckSquare,
   Square,
+  FolderInput,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +42,7 @@ import {
   useUpdateAlbum,
   useDeleteAlbum,
   useReorderAlbums,
+  useMoveAlbums,
   type AdminAlbum,
 } from "@/hooks/useAdminData";
 import { useAlbumPhotos } from "@/hooks/useArchiveData";
@@ -386,6 +388,7 @@ function AdminAlbumsPage() {
   const updateAlbumMutation = useUpdateAlbum();
   const deleteAlbumMutation = useDeleteAlbum();
   const reorderAlbumsMutation = useReorderAlbums();
+  const moveAlbumsMutation = useMoveAlbums();
 
   const handleSaveOrder = async () => {
     if (!isReorderActive || !hasOrderChanged) return;
@@ -402,6 +405,80 @@ function AdminAlbumsPage() {
       setHasOrderChanged(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការរក្សាទុកលំដាប់ Albums";
+      toast.error(msg);
+    }
+  };
+
+  // Move Modal & State
+  const [isMoveOpen, setIsMoveOpen] = useState(false);
+  const [movingAlbums, setMovingAlbums] = useState<AdminAlbum[]>([]);
+  const [targetParentId, setTargetParentId] = useState<string | null>(null);
+
+  const openMoveModalForSingle = (album: AdminAlbum) => {
+    setMovingAlbums([album]);
+    setTargetParentId(album.parentAlbumId || null);
+    setIsMoveOpen(true);
+  };
+
+  const openMoveModalForSelected = () => {
+    const selectedList = localAlbums.filter((a) => selectedIds.has(a.id));
+    if (selectedList.length === 0) return;
+    setMovingAlbums(selectedList);
+    const firstParent = selectedList[0]?.parentAlbumId || null;
+    const allSame = selectedList.every((a) => (a.parentAlbumId || null) === firstParent);
+    setTargetParentId(allSame ? firstParent : null);
+    setIsMoveOpen(true);
+  };
+
+  const candidateParents = useMemo(() => {
+    if (movingAlbums.length === 0) return [];
+    const movingSet = new Set(movingAlbums.map((a) => a.id));
+    const parentMap = new Map<string, string | null>();
+    for (const a of localAlbums) {
+      parentMap.set(a.id, a.parentAlbumId || null);
+    }
+    const scopeFestId = movingAlbums[0]?.festivalId;
+    const scopeYr = movingAlbums[0]?.year;
+
+    return localAlbums.filter((cand) => {
+      if (cand.festivalId !== scopeFestId || cand.year !== scopeYr) return false;
+      if (cand.status === "trashed") return false;
+      if (movingSet.has(cand.id)) return false;
+
+      // Prevent cycles: Ensure candidate is not a descendant of any moving album
+      let curr = cand.parentAlbumId;
+      const visited = new Set<string>();
+      while (curr) {
+        if (movingSet.has(curr)) return false;
+        if (visited.has(curr)) break;
+        visited.add(curr);
+        curr = parentMap.get(curr) || null;
+      }
+      return true;
+    });
+  }, [movingAlbums, localAlbums]);
+
+  const handleExecuteMove = async () => {
+    if (movingAlbums.length === 0) return;
+    const albumIds = movingAlbums.map((a) => a.id);
+    try {
+      await moveAlbumsMutation.mutateAsync({
+        albumIds,
+        targetParentAlbumId: targetParentId,
+      });
+      const targetTitle = targetParentId
+        ? localAlbums.find((a) => a.id === targetParentId)?.title || "Album មេ"
+        : "កម្រិត Root (ថតចម្បង)";
+      toast.success(
+        albumIds.length === 1
+          ? `បានផ្លាស់ទី Album ទៅកាន់ «${targetTitle}» ជោគជ័យ!`
+          : `បានផ្លាស់ទី ${toKhmerNumber(albumIds.length)} Albums ទៅកាន់ «${targetTitle}» ជោគជ័យ!`
+      );
+      setIsMoveOpen(false);
+      setMovingAlbums([]);
+      setSelectedIds(new Set());
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការផ្លាស់ទី Album";
       toast.error(msg);
     }
   };
@@ -611,6 +688,18 @@ function AdminAlbumsPage() {
                 </span>
               )}
 
+              {selectedIds.size > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={openMoveModalForSelected}
+                  className="h-8 rounded-full text-xs border-gold/60 text-gold hover:bg-gold/10 font-medium"
+                >
+                  <FolderInput className="mr-1.5 h-3.5 w-3.5" /> ផ្លាស់ទី ({toKhmerNumber(selectedIds.size)})
+                </Button>
+              )}
+
               {hasOrderChanged && (
                 <span className="rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 px-2.5 py-0.5 text-xs font-medium">
                   ● មានការកែប្រែលំដាប់មិនទាន់រក្សាទុក
@@ -770,10 +859,24 @@ function AdminAlbumsPage() {
                       )}
                     </div>
 
-                    <div className="flex items-center justify-between">
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1 text-xs font-medium text-foreground">
-                        {fest?.emoji || "🎉"} {fest?.name || album.festivalId}
-                      </span>
+                    <div className="flex items-center justify-between gap-1 flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-3 py-1 text-xs font-medium text-foreground">
+                          {fest?.emoji || "🎉"} {fest?.name || album.festivalId}
+                        </span>
+                        {album.parentAlbumId ? (
+                          <span
+                            title={`Sub-album ក្រោម៖ ${localAlbums.find((a) => a.id === album.parentAlbumId)?.title || album.parentAlbumId}`}
+                            className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 px-2 py-0.5 text-[10px] font-semibold border border-blue-500/20"
+                          >
+                            <span>↳ Sub-album</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-secondary/70 text-muted-foreground px-2 py-0.5 text-[10px]">
+                            Root
+                          </span>
+                        )}
+                      </div>
                       <span className="rounded-full bg-gold/10 px-2.5 py-0.5 text-xs font-bold text-gold">
                         ឆ្នាំ {album.year}
                       </span>
@@ -835,7 +938,7 @@ function AdminAlbumsPage() {
                     </div>
 
                     <div className="flex items-center gap-1">
-                      <Button asChild variant="ghost" size="icon" className="h-8 w-8 rounded-xl">
+                      <Button asChild variant="ghost" size="icon" className="h-8 w-8 rounded-xl" title="មើល Album">
                         <a href={`/album/${album.id}`} target="_blank" rel="noopener noreferrer">
                           <ExternalLink className="h-3.5 w-3.5" />
                         </a>
@@ -844,7 +947,18 @@ function AdminAlbumsPage() {
                       <Button
                         variant="ghost"
                         size="icon"
+                        onClick={() => openMoveModalForSingle(album)}
+                        title="ផ្លាស់ទី Album (Move)"
+                        className="h-8 w-8 rounded-xl text-muted-foreground hover:text-gold hover:bg-gold/10"
+                      >
+                        <FolderInput className="h-3.5 w-3.5" />
+                      </Button>
+
+                      <Button
+                        variant="ghost"
+                        size="icon"
                         onClick={() => openEditModal(album)}
+                        title="កែសម្រួល Album"
                         className="h-8 w-8 rounded-xl"
                       >
                         <Edit2 className="h-3.5 w-3.5" />
@@ -855,6 +969,7 @@ function AdminAlbumsPage() {
                         size="icon"
                         disabled={deleteAlbumMutation.isPending}
                         onClick={() => handleDeleteAlbum(album)}
+                        title="ផ្លាស់ទីទៅធុងសំរាម"
                         className="h-8 w-8 rounded-xl text-destructive hover:bg-destructive/10"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -1096,6 +1211,160 @@ function AdminAlbumsPage() {
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal: Move Album(s) */}
+        <Dialog open={isMoveOpen} onOpenChange={setIsMoveOpen}>
+          <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto rounded-3xl p-6 shadow-card">
+            <DialogHeader>
+              <DialogTitle className="font-display text-lg font-bold flex items-center gap-2">
+                <FolderInput className="h-5 w-5 text-gold" />
+                <span>ផ្លាស់ទី Album (Move)</span>
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4 pt-2">
+              {/* Items being moved summary */}
+              <div className="rounded-2xl border border-border/80 bg-muted/30 p-3 text-xs space-y-1.5">
+                <div className="font-semibold text-foreground flex items-center justify-between">
+                  <span>Album ដែលត្រូវផ្លាស់ទី៖</span>
+                  <span className="font-bold text-gold">
+                    {toKhmerNumber(movingAlbums.length)} Albums
+                  </span>
+                </div>
+                <div className="max-h-28 overflow-y-auto space-y-1 pr-1">
+                  {movingAlbums.map((alb) => (
+                    <div
+                      key={alb.id}
+                      className="truncate rounded-md bg-background/80 px-2 py-1 text-[11px] border border-border/50 text-foreground"
+                    >
+                      📁 {alb.title}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Destination selection */}
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-foreground">
+                  ជ្រើសរើសទីតាំងគោលដៅ (Destination Parent)៖
+                </Label>
+
+                {/* Option 1: Root Album */}
+                <button
+                  type="button"
+                  onClick={() => setTargetParentId(null)}
+                  className={cn(
+                    "w-full flex items-center justify-between p-3 rounded-2xl border text-left transition-all cursor-pointer",
+                    targetParentId === null
+                      ? "border-gold bg-gold/10 ring-2 ring-gold/40 shadow-xs"
+                      : "border-border/80 bg-card hover:bg-secondary/40",
+                  )}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-lg">🏠</span>
+                    <div>
+                      <div className="font-semibold text-xs text-foreground">
+                        កម្រិត Root (ថតចម្បង / No Parent)
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">
+                        ដាក់ជា Album កម្រិតខ្ពស់បំផុត (គ្មាន Album មេ)
+                      </div>
+                    </div>
+                  </div>
+                  {targetParentId === null && (
+                    <div className="rounded-full bg-gold text-primary-foreground p-1 shadow-xs">
+                      <Check className="h-3 w-3 stroke-[3]" />
+                    </div>
+                  )}
+                </button>
+
+                {/* Option 2: Candidate Parent Album Selection */}
+                <div className="space-y-1.5 pt-1">
+                  <Label className="text-[11px] text-muted-foreground">
+                    ឬជ្រើសរើសដាក់ចូលក្នុង Album មេណាមួយ (Sub-album) ៖
+                  </Label>
+
+                  {candidateParents.length === 0 ? (
+                    <p className="text-[11px] text-muted-foreground p-3 rounded-xl border border-dashed border-border bg-card/40 text-center">
+                      គ្មាន Album ផ្សេងទៀតក្នុងឆ្នាំ និងបុណ្យនេះដែលអាចជ្រើសជាមេបានឡើយ។
+                    </p>
+                  ) : (
+                    <div className="max-h-52 overflow-y-auto space-y-1.5 p-1 rounded-2xl border border-border/70 bg-background/50">
+                      {candidateParents.map((cand) => {
+                        const isTarget = targetParentId === cand.id;
+                        return (
+                          <button
+                            key={cand.id}
+                            type="button"
+                            onClick={() => setTargetParentId(cand.id)}
+                            className={cn(
+                              "w-full flex items-center justify-between p-2.5 rounded-xl border text-left transition-all cursor-pointer",
+                              isTarget
+                                ? "border-gold bg-gold/15 ring-2 ring-gold/40 shadow-xs"
+                                : "border-border/60 bg-card hover:bg-secondary/60",
+                            )}
+                          >
+                            <div className="flex items-center gap-2 min-w-0 pr-2">
+                              <span className="text-base shrink-0">📁</span>
+                              <div className="min-w-0">
+                                <div className="font-semibold text-xs text-foreground truncate">
+                                  {cand.title}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                                  <span>{toKhmerNumber(cand.photoCount)} រូប</span>
+                                  {cand.parentAlbumId && (
+                                    <span className="text-blue-500 font-medium">↳ Sub-album</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            {isTarget && (
+                              <div className="shrink-0 rounded-full bg-gold text-primary-foreground p-1 shadow-xs">
+                                <Check className="h-3 w-3 stroke-[3]" />
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Preservation note */}
+              <p className="text-[10px] text-muted-foreground bg-muted/40 p-2.5 rounded-xl border border-border/40">
+                ℹ️ ការផ្លាស់ទី (Move) នឹងរក្សារាល់ ID, URL, រូបថត, ការចូលចិត្ត, និងទិន្នន័យទាំងអស់នៃ Album ដដែល ដោយគ្រាន់តែកែប្រែទំនាក់ទំនងឋានានុក្រម និងលំដាប់លំដោយប៉ុណ្ណោះ។
+              </p>
+
+              <DialogFooter className="mt-5 flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsMoveOpen(false)}
+                  className="rounded-full h-9 text-xs"
+                >
+                  បោះបង់
+                </Button>
+                <Button
+                  type="button"
+                  disabled={moveAlbumsMutation.isPending || movingAlbums.length === 0}
+                  onClick={handleExecuteMove}
+                  className="rounded-full bg-gold text-primary-foreground hover:bg-gold/90 h-9 text-xs font-medium px-5"
+                >
+                  {moveAlbumsMutation.isPending ? (
+                    <>
+                      <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> កំពុងផ្លាស់ទី...
+                    </>
+                  ) : (
+                    <>
+                      <FolderInput className="mr-1.5 h-3.5 w-3.5" /> បញ្ជាក់ការផ្លាស់ទី
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </div>
           </DialogContent>
         </Dialog>
       </div>

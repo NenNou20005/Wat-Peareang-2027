@@ -48,6 +48,8 @@ interface JsonDatabaseContent {
     viewsCount?: number;
     likesCount?: number;
     createdAt?: string;
+    sortOrder?: number;
+    parentAlbumId?: string | null;
   }>;
   images?: Array<{
     id: string;
@@ -259,6 +261,7 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
         "festival_id" text NOT NULL,
         "year" integer NOT NULL,
         "event_id" text,
+        "parent_album_id" text,
         "title" text NOT NULL,
         "description" text,
         "location" text DEFAULT 'វត្តពារាំង' NOT NULL,
@@ -275,6 +278,7 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
       // Additive columns for albums
       `ALTER TABLE "albums" ADD COLUMN IF NOT EXISTS "event_id" text;`,
       `ALTER TABLE "albums" ADD COLUMN IF NOT EXISTS "sort_order" integer DEFAULT 0 NOT NULL;`,
+      `ALTER TABLE "albums" ADD COLUMN IF NOT EXISTS "parent_album_id" text;`,
 
       // images
       `CREATE TABLE IF NOT EXISTS "images" (
@@ -574,6 +578,12 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
       END $$;`,
 
       `DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'albums_parent_album_id_albums_id_fk') THEN
+          ALTER TABLE "albums" ADD CONSTRAINT "albums_parent_album_id_albums_id_fk" FOREIGN KEY ("parent_album_id") REFERENCES "albums"("id") ON DELETE set null;
+        END IF;
+      END $$;`,
+
+      `DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'images_album_id_albums_id_fk') THEN
           ALTER TABLE "images" ADD CONSTRAINT "images_album_id_albums_id_fk" FOREIGN KEY ("album_id") REFERENCES "albums"("id") ON DELETE cascade;
         END IF;
@@ -632,6 +642,7 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
       `CREATE INDEX IF NOT EXISTS "idx_albums_festival_id" ON "albums" ("festival_id");`,
       `CREATE INDEX IF NOT EXISTS "idx_albums_year" ON "albums" ("year");`,
       `CREATE INDEX IF NOT EXISTS "idx_albums_event_id" ON "albums" ("event_id");`,
+      `CREATE INDEX IF NOT EXISTS "idx_albums_parent_album_id" ON "albums" ("parent_album_id");`,
       `CREATE INDEX IF NOT EXISTS "idx_albums_status" ON "albums" ("status");`,
       `CREATE INDEX IF NOT EXISTS "idx_albums_sort_order" ON "albums" ("sort_order");`,
       `CREATE INDEX IF NOT EXISTS "idx_images_album_id" ON "images" ("album_id");`,
@@ -853,12 +864,14 @@ export async function migrateJsonToPostgres(): Promise<MigrationSummary> {
             id: a.id,
             festivalId: a.festivalId,
             year: a.year,
+            parentAlbumId: a.parentAlbumId || null,
             title: a.title,
             description: a.description || null,
             location: a.location || "វត្តពារាំង",
             coverImage: a.coverImage || null,
             photoCount: a.photoCount || 0,
             status: a.status || "published",
+            sortOrder: a.sortOrder || 0,
             viewsCount: a.viewsCount || 0,
             likesCount: a.likesCount || 0,
             createdAt: a.createdAt ? new Date(a.createdAt) : new Date(),
@@ -869,12 +882,14 @@ export async function migrateJsonToPostgres(): Promise<MigrationSummary> {
             set: {
               festivalId: a.festivalId,
               year: a.year,
+              parentAlbumId: a.parentAlbumId || null,
               title: a.title,
               description: a.description || null,
               location: a.location || "វត្តពារាំង",
               coverImage: a.coverImage || null,
               photoCount: a.photoCount || 0,
               status: a.status || "published",
+              sortOrder: a.sortOrder || 0,
               updatedAt: new Date(),
             },
           });

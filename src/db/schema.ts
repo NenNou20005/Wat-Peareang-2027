@@ -9,6 +9,7 @@ import {
   boolean,
   index,
   uniqueIndex,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 // --- CORE CONTENT TABLES ---
@@ -78,6 +79,7 @@ export const albums = pgTable(
       .notNull()
       .references(() => years.year, { onDelete: "cascade" }),
     eventId: text("event_id").references(() => events.id, { onDelete: "set null" }),
+    parentAlbumId: text("parent_album_id").references((): AnyPgColumn => albums.id, { onDelete: "set null" }),
     title: text("title").notNull(),
     description: text("description"),
     location: text("location").default("វត្តពារាំង").notNull(),
@@ -94,6 +96,7 @@ export const albums = pgTable(
     index("idx_albums_festival_id").on(table.festivalId),
     index("idx_albums_year").on(table.year),
     index("idx_albums_event_id").on(table.eventId),
+    index("idx_albums_parent_album_id").on(table.parentAlbumId),
     index("idx_albums_status").on(table.status),
     index("idx_albums_sort_order").on(table.sortOrder),
     index("idx_albums_views_count").on(table.viewsCount),

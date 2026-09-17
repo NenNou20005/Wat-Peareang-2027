@@ -39,6 +39,7 @@ import {
   getPostgresAdminActivitySummary,
   generatePostgresExportReport,
   validateHierarchyIntegrity,
+  movePostgresAlbums,
   type AdminAnalyticsOverview,
   type ViewsSeriesPoint,
   type TopAlbumItem,
@@ -78,6 +79,7 @@ export interface StoredAlbum {
   festivalId: string;
   year: number;
   eventId?: string | null | undefined;
+  parentAlbumId?: string | null | undefined;
   location: string;
   title: string;
   description?: string | undefined;
@@ -1556,12 +1558,15 @@ class Database {
           id: album.id,
           festivalId: album.festivalId,
           year: album.year,
+          eventId: album.eventId || null,
+          parentAlbumId: album.parentAlbumId || null,
           title: album.title,
           description: album.description || null,
           location: album.location || "វត្តពារាំង",
           coverImage: album.coverImage || null,
           photoCount: album.photoCount || 0,
           status: "published",
+          sortOrder: album.sortOrder || 0,
         })
         .onConflictDoNothing()
         .catch(() => {});
@@ -1595,12 +1600,42 @@ class Database {
             updates.eventId !== undefined
               ? (updates.eventId ? updates.eventId.trim() : null)
               : pgAlbum.eventId;
+          const pAlbId =
+            updates.parentAlbumId !== undefined
+              ? (updates.parentAlbumId && updates.parentAlbumId.trim() !== "" ? updates.parentAlbumId.trim() : null)
+              : pgAlbum.parentAlbumId;
+
+          // If festivalId or year is changing, ensure this album has no active child albums
+          if (
+            (updates.festivalId && updates.festivalId !== pgAlbum.festivalId) ||
+            (updates.year && updates.year !== pgAlbum.year)
+          ) {
+            const [child] = await drizzle
+              .select({ id: schema.albums.id, title: schema.albums.title })
+              .from(schema.albums)
+              .where(
+                and(
+                  eq(schema.albums.parentAlbumId, id),
+                  sql`${schema.albums.status} != 'trashed'`,
+                ),
+              )
+              .limit(1);
+
+            if (child) {
+              return {
+                success: false,
+                error: `មិនអាចកែប្រែពិធីបុណ្យ ឬឆ្នាំរបស់ Album នេះបានទេ ព្រោះមាន Album កូន «${child.title}» នៅខាងក្រោម។`,
+              };
+            }
+          }
 
           // Strict validation of hierarchy integrity
           const validation = await validateHierarchyIntegrity({
             festivalId: festId,
             year: yr,
             eventId: evId,
+            parentAlbumId: pAlbId,
+            currentAlbumId: id,
           });
 
           if (!validation.valid) {
@@ -1617,6 +1652,7 @@ class Database {
               festivalId: festId,
               year: yr,
               eventId: evId,
+              parentAlbumId: pAlbId,
               title: updates.title !== undefined ? updates.title.trim() : pgAlbum.title,
               description:
                 updates.description !== undefined
@@ -1644,6 +1680,53 @@ class Database {
 
     const album = this.data.albums.find((a) => a.id === id);
     if (album) {
+      if (updates.parentAlbumId !== undefined) {
+        const cleanParent =
+          updates.parentAlbumId && updates.parentAlbumId.trim() !== ""
+            ? updates.parentAlbumId.trim()
+            : null;
+        if (cleanParent) {
+          if (cleanParent === id) {
+            return {
+              success: false,
+              error: "Hierarchy violation: Album មិនអាចជា Album មេ (Parent) របស់ខ្លួនឯងបានឡើយ។",
+            };
+          }
+          const parent = this.data.albums.find((a) => a.id === cleanParent);
+          if (!parent) {
+            return { success: false, error: `រកមិនឃើញ Album មេ ID "${cleanParent}" ឡើយ។` };
+          }
+          if (parent.status === "trashed") {
+            return {
+              success: false,
+              error: `មិនអាចជ្រើសរើស Album មេ «${parent.title}» ដែលស្ថិតក្នុងធុងសំរាមបានឡើយ។`,
+            };
+          }
+          const festId = updates.festivalId || album.festivalId;
+          const yr = updates.year || album.year;
+          if (parent.festivalId !== festId || parent.year !== yr) {
+            return {
+              success: false,
+              error: "Hierarchy violation: Album មេ និង Album កូន ត្រូវតែស្ថិតក្នុងពិធីបុណ្យ និងឆ្នាំតែមួយ។",
+            };
+          }
+          // In-memory cycle check
+          let cur: string | null = parent.parentAlbumId || null;
+          const visited = new Set<string>([parent.id]);
+          while (cur) {
+            if (cur === id) {
+              return {
+                success: false,
+                error: "Hierarchy violation: មិនអាចកំណត់ Album មេបានទេ ព្រោះបង្កើតជាទំនាក់ទំនងវិលជុំ។",
+              };
+            }
+            if (visited.has(cur)) break;
+            visited.add(cur);
+            const anc = this.data.albums.find((a) => a.id === cur);
+            cur = anc?.parentAlbumId || null;
+          }
+        }
+      }
       Object.assign(album, updates);
       albumTitle = album.title;
       this.save();
@@ -1664,6 +1747,150 @@ class Database {
     });
 
     return { success: true };
+  }
+
+  public async moveAlbums(
+    albumIds: string[],
+    targetParentAlbumId: string | null,
+    user: User,
+  ): Promise<{ success: boolean; movedCount: number; targetParentAlbumId?: string | null; error?: string }> {
+    const drizzle = getDrizzleDb();
+
+    if (drizzle && isPostgresConfigured()) {
+      try {
+        const result = await movePostgresAlbums({ albumIds, targetParentAlbumId });
+
+        // Sync in-memory state if loaded
+        for (const id of albumIds) {
+          const alb = this.data.albums.find((a) => a.id === id);
+          if (alb) {
+            alb.parentAlbumId = targetParentAlbumId || undefined;
+          }
+        }
+        this.save();
+
+        this.logActivity({
+          userId: user.id,
+          userName: user.name,
+          userRole: user.role,
+          action: "MOVE_ALBUM",
+          resource: "ALBUM",
+          resourceId: targetParentAlbumId || "root",
+          details: `បានផ្លាស់ទី ${result.movedCount} Albums ទៅកាន់ ${targetParentAlbumId ? `Album #${targetParentAlbumId}` : "ថតធំ (Root)"}`,
+        });
+
+        return { success: true, movedCount: result.movedCount, targetParentAlbumId: result.targetParentAlbumId };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការផ្លាស់ទី Album ក្នុង PostgreSQL។";
+        return { success: false, movedCount: 0, error: msg };
+      }
+    }
+
+    // In-memory fallback
+    try {
+      const uniqueIds = Array.from(new Set(albumIds.filter(Boolean)));
+      if (uniqueIds.length === 0) return { success: false, movedCount: 0, error: "គ្មាន Album សម្រាប់ផ្លាស់ទីឡើយ" };
+
+      if (targetParentAlbumId && uniqueIds.includes(targetParentAlbumId)) {
+        return { success: false, movedCount: 0, error: "Hierarchy violation: មិនអាចផ្លាស់ទី Album ទៅក្នុងខ្លួនឯងបានឡើយ។" };
+      }
+
+      const sourceAlbums = this.data.albums.filter((a) => uniqueIds.includes(a.id));
+      if (sourceAlbums.length !== uniqueIds.length) {
+        return { success: false, movedCount: 0, error: "រកមិនឃើញ Album មួយចំនួនឡើយ។" };
+      }
+
+      for (const alb of sourceAlbums) {
+        if (alb.status === "trashed") {
+          return { success: false, movedCount: 0, error: `មិនអាចផ្លាស់ទី Album «${alb.title}» ដែលស្ថិតក្នុងធុងសំរាមបានឡើយ។` };
+        }
+      }
+
+      const scopeFestivalId = sourceAlbums[0]!.festivalId;
+      const scopeYear = sourceAlbums[0]!.year;
+
+      for (const alb of sourceAlbums) {
+        if (alb.festivalId !== scopeFestivalId || alb.year !== scopeYear) {
+          return { success: false, movedCount: 0, error: "មិនអាចផ្លាស់ទី Albums ឆ្លងកាត់ពិធីបុណ្យ ឬឆ្នាំផ្សេងគ្នាជាមួយគ្នាក្នុងពេលតែមួយបានឡើយ។" };
+        }
+      }
+
+      // Check selection for ancestor-descendant
+      const movingIdSet = new Set(uniqueIds);
+      for (const alb of sourceAlbums) {
+        let ancId = alb.parentAlbumId;
+        const checked = new Set<string>();
+        while (ancId) {
+          if (movingIdSet.has(ancId)) {
+            return {
+              success: false,
+              movedCount: 0,
+              error: `មិនអាចផ្លាស់ទី Albums ដែលមានទំនាក់ទំនងជាមេ-កូនជាមួយគ្នា (${ancId} និង ${alb.id}) ក្នុងពេលតែមួយបានទេ។`,
+            };
+          }
+          if (checked.has(ancId)) break;
+          checked.add(ancId);
+          const anc = this.data.albums.find((a) => a.id === ancId);
+          ancId = anc?.parentAlbumId;
+        }
+      }
+
+      if (targetParentAlbumId) {
+        const targetParent = this.data.albums.find((a) => a.id === targetParentAlbumId);
+        if (!targetParent) return { success: false, movedCount: 0, error: "រកមិនឃើញ Album គោលដៅឡើយ។" };
+        if (targetParent.status === "trashed") return { success: false, movedCount: 0, error: "មិនអាចផ្លាស់ទីទៅកាន់ Album ដែលស្ថិតក្នុងធុងសំរាមបានឡើយ។" };
+        if (targetParent.festivalId !== scopeFestivalId || targetParent.year !== scopeYear) {
+          return { success: false, movedCount: 0, error: "Album គោលដៅត្រូវតែស្ថិតក្នុងពិធីបុណ្យ និងឆ្នាំតែមួយ។" };
+        }
+
+        // Cycle check
+        let cur = targetParent.parentAlbumId;
+        const visited = new Set<string>([targetParent.id]);
+        while (cur) {
+          if (movingIdSet.has(cur)) {
+            return { success: false, movedCount: 0, error: "Hierarchy violation: មិនអាចកំណត់ Album មេបានទេ ព្រោះបង្កើតជាទំនាក់ទំនងវិលជុំ។" };
+          }
+          if (visited.has(cur)) break;
+          visited.add(cur);
+          const anc = this.data.albums.find((a) => a.id === cur);
+          cur = anc?.parentAlbumId;
+        }
+      }
+
+      // Max sortOrder in target scope
+      const existingInTarget = this.data.albums.filter((a) => {
+        if (uniqueIds.includes(a.id) || a.status === "trashed") return false;
+        if (a.festivalId !== scopeFestivalId || a.year !== scopeYear) return false;
+        if (targetParentAlbumId) return a.parentAlbumId === targetParentAlbumId;
+        return !a.parentAlbumId;
+      });
+
+      let nextOrder = existingInTarget.reduce((max, a) => Math.max(max, a.sortOrder ?? -1), -1) + 1;
+
+      const sorted = [...sourceAlbums].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+      for (const alb of sorted) {
+        alb.parentAlbumId = targetParentAlbumId || undefined;
+        alb.sortOrder = nextOrder++;
+        alb.updatedAt = new Date().toISOString();
+      }
+
+      this.save();
+
+      this.logActivity({
+        userId: user.id,
+        userName: user.name,
+        userRole: user.role,
+        action: "MOVE_ALBUM",
+        resource: "ALBUM",
+        resourceId: targetParentAlbumId || "root",
+        details: `បានផ្លាស់ទី ${sorted.length} Albums ទៅកាន់ ${targetParentAlbumId ? `Album #${targetParentAlbumId}` : "ថតធំ (Root)"}`,
+      });
+
+      return { success: true, movedCount: sorted.length, targetParentAlbumId };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការផ្លាស់ទី Album";
+      return { success: false, movedCount: 0, error: msg };
+    }
   }
 
   public async trashAlbum(id: string, user: User): Promise<{ success: boolean; error?: string }> {
@@ -1845,6 +2072,11 @@ class Database {
 
     // 2. Delete from Memory State
     this.data.albums = this.data.albums.filter((a) => a.id !== id);
+    for (const alb of this.data.albums) {
+      if (alb.parentAlbumId === id) {
+        alb.parentAlbumId = undefined;
+      }
+    }
     this.data.images = this.data.images.filter((img) => img.albumId !== id);
     this.save();
 

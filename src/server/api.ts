@@ -1367,11 +1367,48 @@ ${allUrls
       }
     }
 
+    // POST /api/admin/albums/move
+    if (pathname === "/api/admin/albums/move" && method === "POST") {
+      try {
+        const body = await request.json();
+        const { albumIds, albumId, targetParentAlbumId } = body;
+        const targetIds: string[] = Array.isArray(albumIds)
+          ? albumIds
+          : albumId && typeof albumId === "string"
+            ? [albumId]
+            : [];
+
+        if (targetIds.length === 0) {
+          return json({ success: false, error: "សូមជ្រើសរើស Album យ៉ាងហោចណាស់មួយដើម្បីផ្លាស់ទី" }, 400);
+        }
+
+        const cleanTargetParentId =
+          targetParentAlbumId && typeof targetParentAlbumId === "string" && targetParentAlbumId.trim() !== ""
+            ? targetParentAlbumId.trim()
+            : null;
+
+        const result = await db.moveAlbums(targetIds, cleanTargetParentId, currentUser);
+        if (!result.success) {
+          return json({ success: false, error: result.error }, 400);
+        }
+
+        return json({
+          success: true,
+          message: `បានផ្លាស់ទី ${result.movedCount} Album ដោយជោគជ័យ`,
+          data: result,
+        });
+      } catch (err: unknown) {
+        logger.error("Failed to move albums", { error: err });
+        const errorMsg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការផ្លាស់ទី Album";
+        return json({ success: false, error: errorMsg }, 400);
+      }
+    }
+
     // POST /api/admin/albums
     if (pathname === "/api/admin/albums" && method === "POST") {
       try {
         const body = await request.json();
-        const { festivalId, year, eventId, location, title, description, coverImage } = body;
+        const { festivalId, year, eventId, parentAlbumId, location, title, description, coverImage } = body;
         const numYear = Number(year);
         if (!festivalId || !numYear || isNaN(numYear) || !title || !title.trim()) {
           return json(
@@ -1384,12 +1421,17 @@ ${allUrls
         }
 
         const cleanEventId = eventId && typeof eventId === "string" && eventId.trim() ? eventId.trim() : null;
+        const cleanParentAlbumId =
+          parentAlbumId && typeof parentAlbumId === "string" && parentAlbumId.trim()
+            ? parentAlbumId.trim()
+            : null;
 
         // Validate hierarchy integrity
         const validation = await validateHierarchyIntegrity({
           festivalId,
           year: numYear,
           eventId: cleanEventId,
+          parentAlbumId: cleanParentAlbumId,
         });
         if (!validation.valid) {
           return json({ success: false, error: validation.error || "Hierarchy validation failed" }, 400);
@@ -1431,6 +1473,7 @@ ${allUrls
             festivalId,
             year: numYear,
             eventId: cleanEventId,
+            parentAlbumId: cleanParentAlbumId,
             title: title.trim(),
             location: (location && location.trim()) || "វត្តពារាំង",
             description: (description && description.trim()) || null,
@@ -1471,6 +1514,8 @@ ${allUrls
             id: `${festivalId}-${numYear}`,
             festivalId,
             year: numYear,
+            eventId: cleanEventId || undefined,
+            parentAlbumId: cleanParentAlbumId || undefined,
             location: location || "វត្តពារាំង",
             title: title.trim(),
             description: description || undefined,

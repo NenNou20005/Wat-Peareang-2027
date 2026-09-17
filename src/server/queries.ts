@@ -1,6 +1,6 @@
 import { getDrizzleDb, isPostgresConfigured } from "../db/index.ts";
 import * as schema from "../db/schema.ts";
-import { eq, and, desc, asc, sql, ilike, or, gte, lte, inArray, ne, isNull, notLike } from "drizzle-orm";
+import { eq, and, desc, asc, sql, ilike, or, gte, lte, inArray, notInArray, ne, isNull, notLike } from "drizzle-orm";
 import { normalizeSearchQuery } from "../lib/search-normalizer.ts";
 import type { Festival, Album } from "../data/archive";
 
@@ -13,6 +13,7 @@ export interface DbFestival extends Festival {
 export interface DbAlbum extends Album {
   description?: string | null | undefined;
   eventId?: string | null | undefined;
+  parentAlbumId?: string | null | undefined;
   viewsCount?: number | undefined;
   likesCount?: number | undefined;
   status?: string | undefined;
@@ -162,6 +163,8 @@ export async function getPostgresAlbums(filter?: {
         a.id,
         a.festival_id,
         a.year,
+        a.event_id,
+        a.parent_album_id,
         a.location,
         a.title,
         a.description,
@@ -246,6 +249,8 @@ export async function getPostgresAlbums(filter?: {
         likesCount: row.likes_count,
         status: row.status,
         sortOrder: row.sort_order !== undefined && row.sort_order !== null ? Number(row.sort_order) : 0,
+        eventId: row.event_id || null,
+        parentAlbumId: row.parent_album_id || null,
       };
     });
 
@@ -358,6 +363,9 @@ export async function getPostgresAlbumById(albumId: string): Promise<DbAlbum | n
       viewsCount: album.viewsCount,
       likesCount: album.likesCount,
       status: album.status,
+      sortOrder: album.sortOrder !== undefined && album.sortOrder !== null ? Number(album.sortOrder) : 0,
+      eventId: album.eventId || null,
+      parentAlbumId: album.parentAlbumId || null,
     };
   } catch (err) {
     console.warn("[PostgreSQL Query Error] Failed to read album by ID:", err);
@@ -920,6 +928,8 @@ export async function getAdminAlbumsPaginated(params: {
         likesCount: album.likesCount,
         status: album.status,
         sortOrder: album.sortOrder ?? 0,
+        eventId: album.eventId || null,
+        parentAlbumId: album.parentAlbumId || null,
       };
     });
 
@@ -5785,11 +5795,19 @@ export interface DbEventWithAlbums extends DbEvent {
  * 2. Year exists
  * 3. Event (if specified) exists and strictly belongs to the specified (festivalId, year)
  * 4. Cross-festival and cross-year assignments are strictly rejected
+ * 5. If parentAlbumId is specified:
+ *    - Child cannot be its own parent
+ *    - Parent album must exist and not be in trash
+ *    - Parent and child must belong to the same festival and year
+ *    - Event compatibility: If both parent and child specify an eventId, they must match
+ *    - Circular dependencies / cycles are detected and strictly rejected
  */
 export async function validateHierarchyIntegrity(params: {
   festivalId: string;
   year: number;
   eventId?: string | null | undefined;
+  parentAlbumId?: string | null | undefined;
+  currentAlbumId?: string | undefined;
 }): Promise<{ valid: boolean; error?: string }> {
   const db = getDrizzleDb();
   if (!db || !isPostgresConfigured()) {
@@ -5797,7 +5815,7 @@ export async function validateHierarchyIntegrity(params: {
   }
 
   try {
-    const { festivalId, year, eventId } = params;
+    const { festivalId, year, eventId, parentAlbumId, currentAlbumId } = params;
 
     // 1. Verify Festival exists
     const [festival] = await db
@@ -5828,7 +5846,9 @@ export async function validateHierarchyIntegrity(params: {
     }
 
     // 3. If eventId is provided, verify Event exists AND strictly belongs to the same festival and year
-    if (eventId && eventId.trim() !== "") {
+    const cleanEventId =
+      eventId && typeof eventId === "string" && eventId.trim() !== "" ? eventId.trim() : null;
+    if (cleanEventId) {
       const [event] = await db
         .select({
           id: schema.events.id,
@@ -5837,13 +5857,13 @@ export async function validateHierarchyIntegrity(params: {
           nameKh: schema.events.nameKh,
         })
         .from(schema.events)
-        .where(eq(schema.events.id, eventId.trim()))
+        .where(eq(schema.events.id, cleanEventId))
         .limit(1);
 
       if (!event) {
         return {
           valid: false,
-          error: `ព្រឹត្តិការណ៍ ID "${eventId}" មិនមាននៅក្នុងប្រព័ន្ធឡើយ។`,
+          error: `ព្រឹត្តិការណ៍ ID "${cleanEventId}" មិនមាននៅក្នុងប្រព័ន្ធឡើយ។`,
         };
       }
 
@@ -5853,6 +5873,113 @@ export async function validateHierarchyIntegrity(params: {
           valid: false,
           error: `Hierarchy violation: ព្រឹត្តិការណ៍ «${event.nameKh}» ជាកម្មសិទ្ធិរបស់ (${event.festivalId}, ${event.year}) មិនអាចចាត់តាំងទៅ (${festivalId}, ${year}) បានទេ។`,
         };
+      }
+    }
+
+    // 4. If parentAlbumId is provided, validate nested parent relationship
+    const cleanParentAlbumId =
+      parentAlbumId && typeof parentAlbumId === "string" && parentAlbumId.trim() !== ""
+        ? parentAlbumId.trim()
+        : null;
+
+    if (cleanParentAlbumId) {
+      // 4a. Self-parent check: Album cannot be its own parent
+      if (currentAlbumId && currentAlbumId.trim() === cleanParentAlbumId) {
+        return {
+          valid: false,
+          error: "Hierarchy violation: Album មិនអាចជា Album មេ (Parent) របស់ខ្លួនឯងបានឡើយ។",
+        };
+      }
+
+      // 4b. Verify Parent Album exists
+      const [parentAlbum] = await db
+        .select({
+          id: schema.albums.id,
+          festivalId: schema.albums.festivalId,
+          year: schema.albums.year,
+          eventId: schema.albums.eventId,
+          parentAlbumId: schema.albums.parentAlbumId,
+          title: schema.albums.title,
+          status: schema.albums.status,
+        })
+        .from(schema.albums)
+        .where(eq(schema.albums.id, cleanParentAlbumId))
+        .limit(1);
+
+      if (!parentAlbum) {
+        return {
+          valid: false,
+          error: `រកមិនឃើញ Album មេ (Parent Album) ID "${cleanParentAlbumId}" នៅក្នុងប្រព័ន្ធឡើយ។`,
+        };
+      }
+
+      // 4c. Parent must not be in trash
+      if (parentAlbum.status === "trashed") {
+        return {
+          valid: false,
+          error: `មិនអាចជ្រើសរើស Album មេ «${parentAlbum.title}» ដែលស្ថិតក្នុងធុងសំរាមបានឡើយ។`,
+        };
+      }
+
+      // 4d. Same Festival check: Parent and child must belong to the same festival
+      if (parentAlbum.festivalId !== festivalId) {
+        return {
+          valid: false,
+          error: `Hierarchy violation: Album មេ «${parentAlbum.title}» ស្ថិតក្នុងពិធីបុណ្យ "${parentAlbum.festivalId}" ខុសពីពិធីបុណ្យ "${festivalId}" នៃ Album នេះ។`,
+        };
+      }
+
+      // 4e. Same Year check: Parent and child must belong to the same year
+      if (parentAlbum.year !== year) {
+        return {
+          valid: false,
+          error: `Hierarchy violation: Album មេ «${parentAlbum.title}» ស្ថិតក្នុងឆ្នាំ ${parentAlbum.year} ខុសពីឆ្នាំ ${year} នៃ Album នេះ។`,
+        };
+      }
+
+      // 4f. Event Compatibility check:
+      // If both parent and child specify an eventId, they must not conflict
+      if (cleanEventId && parentAlbum.eventId && cleanEventId !== parentAlbum.eventId) {
+        return {
+          valid: false,
+          error: `Hierarchy violation: Album មេ «${parentAlbum.title}» និង Album កូន មិនអាចស្ថិតក្នុងព្រឹត្តិការណ៍ផ្សេងគ្នាបានឡើយ។`,
+        };
+      }
+
+      // 4g. Cycle Prevention (Circular Relationship Detection):
+      // Traverse up the parent's ancestor chain to ensure currentAlbumId is not an ancestor
+      if (currentAlbumId && currentAlbumId.trim() !== "") {
+        const targetId = currentAlbumId.trim();
+        let currAncestorId: string | null = parentAlbum.parentAlbumId;
+        const visited = new Set<string>([parentAlbum.id]);
+
+        while (currAncestorId) {
+          if (currAncestorId === targetId) {
+            return {
+              valid: false,
+              error: "Hierarchy violation: មិនអាចកំណត់ Album មេបានទេ ព្រោះបង្កើតជាទំនាក់ទំនងវិលជុំ (Circular Dependency)។",
+            };
+          }
+          if (visited.has(currAncestorId)) {
+            // Existing loop protection
+            break;
+          }
+          visited.add(currAncestorId);
+
+          const [ancestor] = await db
+            .select({
+              id: schema.albums.id,
+              parentAlbumId: schema.albums.parentAlbumId,
+            })
+            .from(schema.albums)
+            .where(eq(schema.albums.id, currAncestorId))
+            .limit(1);
+
+          if (!ancestor) {
+            break;
+          }
+          currAncestorId = ancestor.parentAlbumId;
+        }
       }
     }
 
@@ -5946,6 +6073,8 @@ export async function getPostgresEventsForFestivalYear(
       createdAt: a.createdAt.toISOString(),
       updatedAt: a.updatedAt.toISOString(),
       festival: festivalMeta,
+      sortOrder: a.sortOrder,
+      parentAlbumId: a.parentAlbumId || null,
     });
 
     const mappedAlbums = albumRows.map(mapAlbum);
@@ -6085,6 +6214,8 @@ export async function getPostgresEventById(eventId: string): Promise<DbEventWith
       createdAt: a.createdAt.toISOString(),
       updatedAt: a.updatedAt.toISOString(),
       festival: festivalMeta,
+      sortOrder: a.sortOrder,
+      parentAlbumId: a.parentAlbumId || null,
     }));
 
     return {
@@ -6562,4 +6693,219 @@ export async function reorderPostgresAlbums(
   });
 
   return true;
+}
+
+/**
+ * Admin: Move one or more albums to Root (null) or into a target Parent Album.
+ * Atomically updates parent_album_id and assigns next sequential sort_order in target scope.
+ * Guarantees cycle protection, hierarchy integrity, atomicity, and preserves all album identity.
+ */
+export async function movePostgresAlbums(params: {
+  albumIds: string[];
+  targetParentAlbumId: string | null;
+}): Promise<{ success: boolean; movedCount: number; targetParentAlbumId: string | null }> {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) {
+    throw new Error("Database connection is not configured.");
+  }
+
+  const { albumIds, targetParentAlbumId } = params;
+  if (!Array.isArray(albumIds) || albumIds.length === 0) {
+    throw new Error("Invalid parameters: albumIds must be a non-empty array.");
+  }
+
+  // Deduplicate source IDs
+  const uniqueIds = Array.from(new Set(albumIds.map((id) => (id ? id.trim() : "")).filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    throw new Error("Invalid parameters: no valid album IDs provided.");
+  }
+
+  const cleanTargetParentId =
+    targetParentAlbumId && typeof targetParentAlbumId === "string" && targetParentAlbumId.trim() !== ""
+      ? targetParentAlbumId.trim()
+      : null;
+
+  // 1. Self-move check: cannot move an album into itself
+  if (cleanTargetParentId && uniqueIds.includes(cleanTargetParentId)) {
+    throw new Error("Hierarchy violation: មិនអាចផ្លាស់ទី Album ទៅក្នុងខ្លួនឯងបានឡើយ (Cannot move album into itself)។");
+  }
+
+  // Execute inside an atomic transaction
+  return await db.transaction(async (tx) => {
+    // 2. Fetch all source albums
+    const sourceAlbums = await tx
+      .select({
+        id: schema.albums.id,
+        festivalId: schema.albums.festivalId,
+        year: schema.albums.year,
+        eventId: schema.albums.eventId,
+        parentAlbumId: schema.albums.parentAlbumId,
+        title: schema.albums.title,
+        status: schema.albums.status,
+        sortOrder: schema.albums.sortOrder,
+      })
+      .from(schema.albums)
+      .where(inArray(schema.albums.id, uniqueIds));
+
+    if (sourceAlbums.length !== uniqueIds.length) {
+      throw new Error("រកមិនឃើញ Album មួយចំនួនដែលត្រូវផ្លាស់ទីក្នុងប្រព័ន្ធទិន្នន័យឡើយ (One or more source albums were not found)។");
+    }
+
+    // 3. Ensure no source album is in trash
+    for (const alb of sourceAlbums) {
+      if (alb.status === "trashed") {
+        throw new Error(`មិនអាចផ្លាស់ទី Album «${alb.title}» ដែលស្ថិតក្នុងធុងសំរាមបានឡើយ។`);
+      }
+    }
+
+    // 4. Ensure all source albums belong to the same festival and year
+    const scopeFestivalId = sourceAlbums[0]!.festivalId;
+    const scopeYear = sourceAlbums[0]!.year;
+
+    for (const alb of sourceAlbums) {
+      if (alb.festivalId !== scopeFestivalId || alb.year !== scopeYear) {
+        throw new Error("មិនអាចផ្លាស់ទី Albums ឆ្លងកាត់ពិធីបុណ្យ ឬឆ្នាំផ្សេងគ្នាជាមួយគ្នាក្នុងពេលតែមួយបានឡើយ (All moved albums must share the same festival and year)។");
+      }
+    }
+
+    // 5. Ensure the selection does not contain both an ancestor and its descendant
+    const movingIdSet = new Set(uniqueIds);
+    for (const alb of sourceAlbums) {
+      let ancId = alb.parentAlbumId;
+      const checkedAncs = new Set<string>();
+      while (ancId) {
+        if (movingIdSet.has(ancId)) {
+          throw new Error(
+            `មិនអាចផ្លាស់ទី Albums ដែលមានទំនាក់ទំនងជាមេ-កូនជាមួយគ្នា (${ancId} និង ${alb.id}) ក្នុងពេលតែមួយបានទេ។ សូមជ្រើសរើសតែ Album មេ ដើម្បីផ្លាស់ទីទាំងមេ និងកូន។`,
+          );
+        }
+        if (checkedAncs.has(ancId)) break;
+        checkedAncs.add(ancId);
+
+        const [anc] = await tx
+          .select({ parentAlbumId: schema.albums.parentAlbumId })
+          .from(schema.albums)
+          .where(eq(schema.albums.id, ancId))
+          .limit(1);
+
+        ancId = anc?.parentAlbumId || null;
+      }
+    }
+
+    // 6. Target Parent validation (if moving into another Album)
+    if (cleanTargetParentId) {
+      const [targetParent] = await tx
+        .select({
+          id: schema.albums.id,
+          festivalId: schema.albums.festivalId,
+          year: schema.albums.year,
+          eventId: schema.albums.eventId,
+          parentAlbumId: schema.albums.parentAlbumId,
+          title: schema.albums.title,
+          status: schema.albums.status,
+        })
+        .from(schema.albums)
+        .where(eq(schema.albums.id, cleanTargetParentId))
+        .limit(1);
+
+      if (!targetParent) {
+        throw new Error(`រកមិនឃើញ Album មេ (Target Parent) ID "${cleanTargetParentId}" នៅក្នុងប្រព័ន្ធឡើយ។`);
+      }
+
+      if (targetParent.status === "trashed") {
+        throw new Error(`មិនអាចផ្លាស់ទីទៅកាន់ Album មេ «${targetParent.title}» ដែលស្ថិតក្នុងធុងសំរាមបានឡើយ។`);
+      }
+
+      if (targetParent.festivalId !== scopeFestivalId) {
+        throw new Error(`Hierarchy violation: Album មេ «${targetParent.title}» ស្ថិតក្នុងពិធីបុណ្យ "${targetParent.festivalId}" ខុសពីពិធីបុណ្យ "${scopeFestivalId}" នៃ Album ទាំងនេះ។`);
+      }
+
+      if (targetParent.year !== scopeYear) {
+        throw new Error(`Hierarchy violation: Album មេ «${targetParent.title}» ស្ថិតក្នុងឆ្នាំ ${targetParent.year} ខុសពីឆ្នាំ ${scopeYear} នៃ Album ទាំងនេះ។`);
+      }
+
+      // Event compatibility: If both parent and child specify an eventId, they must match
+      if (targetParent.eventId) {
+        for (const alb of sourceAlbums) {
+          if (alb.eventId && alb.eventId !== targetParent.eventId) {
+            throw new Error(`Hierarchy violation: Album មេ «${targetParent.title}» និង Album «${alb.title}» មិនអាចស្ថិតក្នុងព្រឹត្តិការណ៍ផ្សេងគ្នាបានឡើយ។`);
+          }
+        }
+      }
+
+      // Cycle detection: Traverse targetParent's ancestor chain to ensure none of uniqueIds is an ancestor
+      let currAncestorId: string | null = targetParent.parentAlbumId;
+      const visitedAncs = new Set<string>([targetParent.id]);
+
+      while (currAncestorId) {
+        if (movingIdSet.has(currAncestorId)) {
+          throw new Error(
+            "Hierarchy violation: មិនអាចផ្លាស់ទី Album មេ ទៅក្នុង Album កូន ឬចៅរបស់ខ្លួនបានទេ ព្រោះបង្កើតជាទំនាក់ទំនងវិលជុំ (Circular Dependency)។",
+          );
+        }
+        if (visitedAncs.has(currAncestorId)) {
+          break;
+        }
+        visitedAncs.add(currAncestorId);
+
+        const [ancestor] = await tx
+          .select({
+            id: schema.albums.id,
+            parentAlbumId: schema.albums.parentAlbumId,
+          })
+          .from(schema.albums)
+          .where(eq(schema.albums.id, currAncestorId))
+          .limit(1);
+
+        if (!ancestor) break;
+        currAncestorId = ancestor.parentAlbumId;
+      }
+    }
+
+    // 7. Calculate next sequential sortOrder in target scope (preserving existing order of target scope)
+    const targetScopeCondition = cleanTargetParentId
+      ? and(
+          eq(schema.albums.festivalId, scopeFestivalId),
+          eq(schema.albums.year, scopeYear),
+          eq(schema.albums.parentAlbumId, cleanTargetParentId),
+          ne(schema.albums.status, "trashed"),
+          notInArray(schema.albums.id, uniqueIds),
+        )
+      : and(
+          eq(schema.albums.festivalId, scopeFestivalId),
+          eq(schema.albums.year, scopeYear),
+          isNull(schema.albums.parentAlbumId),
+          ne(schema.albums.status, "trashed"),
+          notInArray(schema.albums.id, uniqueIds),
+        );
+
+    const [maxOrderRow] = await tx
+      .select({ maxOrder: sql<number>`COALESCE(MAX(${schema.albums.sortOrder}), -1)` })
+      .from(schema.albums)
+      .where(targetScopeCondition);
+
+    let nextSortOrder = Number(maxOrderRow?.maxOrder ?? -1) + 1;
+
+    // Preserve relative order among moved albums (maintain existing sortOrder order)
+    const sortedSourceAlbums = [...sourceAlbums].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+
+    // 8. Atomically update each moved album
+    const now = new Date();
+    for (const alb of sortedSourceAlbums) {
+      await tx
+        .update(schema.albums)
+        .set({
+          parentAlbumId: cleanTargetParentId,
+          sortOrder: nextSortOrder++,
+          updatedAt: now,
+        })
+        .where(eq(schema.albums.id, alb.id));
+    }
+
+    return {
+      success: true,
+      movedCount: sortedSourceAlbums.length,
+      targetParentAlbumId: cleanTargetParentId,
+    };
+  });
 }
