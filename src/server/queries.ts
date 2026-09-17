@@ -1,6 +1,6 @@
 import { getDrizzleDb, isPostgresConfigured } from "../db/index.ts";
 import * as schema from "../db/schema.ts";
-import { eq, and, desc, asc, sql, ilike, or, gte, lte, inArray, ne } from "drizzle-orm";
+import { eq, and, desc, asc, sql, ilike, or, gte, lte, inArray, ne, isNull, notLike } from "drizzle-orm";
 import { normalizeSearchQuery } from "../lib/search-normalizer.ts";
 import type { Festival, Album } from "../data/archive";
 
@@ -721,7 +721,15 @@ export async function getAdminDashboardMetrics(): Promise<AdminDashboardMetrics>
       db.select({ count: sql<number>`count(*)` }).from(schema.users),
       db.select({ count: sql<number>`count(*)` }).from(schema.likes),
       db.select({ count: sql<number>`count(*)` }).from(schema.favorites),
-      db.select({ count: sql<number>`count(*)` }).from(schema.viewsLog),
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(schema.viewsLog)
+        .where(
+          and(
+            isNull(schema.viewsLog.userId),
+            notLike(schema.viewsLog.resourceId, "/admin%"),
+          ),
+        ),
       db
         .select({ count: sql<number>`count(*)` })
         .from(schema.images)
@@ -1946,38 +1954,80 @@ export async function getPostgresAnalyticsOverview(
       db
         .select({ count: sql<number>`count(distinct ${schema.viewsLog.visitorId})` })
         .from(schema.viewsLog)
-        .where(gte(schema.viewsLog.createdAt, startToday)),
+        .where(
+          and(
+            isNull(schema.viewsLog.userId),
+            notLike(schema.viewsLog.resourceId, "/admin%"),
+            gte(schema.viewsLog.createdAt, startToday),
+          ),
+        ),
       db
         .select({ count: sql<number>`count(distinct ${schema.viewsLog.visitorId})` })
         .from(schema.viewsLog)
-        .where(gte(schema.viewsLog.createdAt, start7d)),
+        .where(
+          and(
+            isNull(schema.viewsLog.userId),
+            notLike(schema.viewsLog.resourceId, "/admin%"),
+            gte(schema.viewsLog.createdAt, start7d),
+          ),
+        ),
       db
         .select({ count: sql<number>`count(distinct ${schema.viewsLog.visitorId})` })
         .from(schema.viewsLog)
-        .where(gte(schema.viewsLog.createdAt, start30d)),
-      db.select({ count: sql<number>`count(*)` }).from(schema.visitorSessions),
+        .where(
+          and(
+            isNull(schema.viewsLog.userId),
+            notLike(schema.viewsLog.resourceId, "/admin%"),
+            gte(schema.viewsLog.createdAt, start30d),
+          ),
+        ),
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(schema.visitorSessions)
+        .where(isNull(schema.visitorSessions.userId)),
       db
         .select({ count: sql<number>`count(*)` })
         .from(schema.viewsLog)
         .where(
-          and(eq(schema.viewsLog.resourceType, "page"), gte(schema.viewsLog.createdAt, startToday)),
+          and(
+            eq(schema.viewsLog.resourceType, "page"),
+            isNull(schema.viewsLog.userId),
+            notLike(schema.viewsLog.resourceId, "/admin%"),
+            gte(schema.viewsLog.createdAt, startToday),
+          ),
         ),
       db
         .select({ count: sql<number>`count(*)` })
         .from(schema.viewsLog)
         .where(
-          and(eq(schema.viewsLog.resourceType, "page"), gte(schema.viewsLog.createdAt, start7d)),
+          and(
+            eq(schema.viewsLog.resourceType, "page"),
+            isNull(schema.viewsLog.userId),
+            notLike(schema.viewsLog.resourceId, "/admin%"),
+            gte(schema.viewsLog.createdAt, start7d),
+          ),
         ),
       db
         .select({ count: sql<number>`count(*)` })
         .from(schema.viewsLog)
         .where(
-          and(eq(schema.viewsLog.resourceType, "page"), gte(schema.viewsLog.createdAt, start30d)),
+          and(
+            eq(schema.viewsLog.resourceType, "page"),
+            isNull(schema.viewsLog.userId),
+            notLike(schema.viewsLog.resourceId, "/admin%"),
+            gte(schema.viewsLog.createdAt, start30d),
+          ),
         ),
       db
         .select({ count: sql<number>`count(*)` })
         .from(schema.viewsLog)
-        .where(eq(schema.viewsLog.resourceType, "page")),
+        .where(
+          and(
+            eq(schema.viewsLog.resourceType, "page"),
+            isNull(schema.viewsLog.userId),
+            notLike(schema.viewsLog.resourceId, "/admin%"),
+          ),
+        ),
       db
         .select({ count: sql<number>`count(*)` })
         .from(schema.viewsLog)
@@ -1988,19 +2038,34 @@ export async function getPostgresAnalyticsOverview(
         .where(eq(schema.viewsLog.resourceType, "image")),
       // Current Period
       period === "all"
-        ? db.select({ count: sql<number>`count(*)` }).from(schema.visitorSessions)
+        ? db
+            .select({ count: sql<number>`count(*)` })
+            .from(schema.visitorSessions)
+            .where(isNull(schema.visitorSessions.userId))
         : db
             .select({ count: sql<number>`count(distinct ${schema.viewsLog.visitorId})` })
             .from(schema.viewsLog)
-            .where(gte(schema.viewsLog.createdAt, startPeriod)),
+            .where(
+              and(
+                isNull(schema.viewsLog.userId),
+                notLike(schema.viewsLog.resourceId, "/admin%"),
+                gte(schema.viewsLog.createdAt, startPeriod),
+              ),
+            ),
       db
         .select({ count: sql<number>`count(*)` })
         .from(schema.viewsLog)
         .where(
           period === "all"
-            ? eq(schema.viewsLog.resourceType, "page")
+            ? and(
+                eq(schema.viewsLog.resourceType, "page"),
+                isNull(schema.viewsLog.userId),
+                notLike(schema.viewsLog.resourceId, "/admin%"),
+              )
             : and(
                 eq(schema.viewsLog.resourceType, "page"),
+                isNull(schema.viewsLog.userId),
+                notLike(schema.viewsLog.resourceId, "/admin%"),
                 gte(schema.viewsLog.createdAt, startPeriod),
               ),
         ),
@@ -2167,8 +2232,13 @@ export async function getPostgresAnalyticsViewsSeries(
       .from(schema.viewsLog)
       .where(
         period === "all"
-          ? undefined
+          ? and(
+              isNull(schema.viewsLog.userId),
+              notLike(schema.viewsLog.resourceId, "/admin%"),
+            )
           : and(
+              isNull(schema.viewsLog.userId),
+              notLike(schema.viewsLog.resourceId, "/admin%"),
               gte(schema.viewsLog.createdAt, startDate),
               lte(schema.viewsLog.createdAt, endDate),
             ),
@@ -4216,19 +4286,34 @@ export async function getPostgresReportsSummary(
         .from(schema.viewsLog)
         .where(
           period === "all"
-            ? undefined
-            : and(gte(schema.viewsLog.createdAt, cStart), lte(schema.viewsLog.createdAt, cEnd)),
+            ? and(
+                isNull(schema.viewsLog.userId),
+                notLike(schema.viewsLog.resourceId, "/admin%"),
+              )
+            : and(
+                isNull(schema.viewsLog.userId),
+                notLike(schema.viewsLog.resourceId, "/admin%"),
+                gte(schema.viewsLog.createdAt, cStart),
+                lte(schema.viewsLog.createdAt, cEnd),
+              ),
         ),
       db
         .select({ count: sql<number>`count(*)` })
         .from(schema.viewsLog)
         .where(
-          and(
-            eq(schema.viewsLog.resourceType, "page"),
-            period === "all"
-              ? undefined
-              : and(gte(schema.viewsLog.createdAt, cStart), lte(schema.viewsLog.createdAt, cEnd)),
-          ),
+          period === "all"
+            ? and(
+                eq(schema.viewsLog.resourceType, "page"),
+                isNull(schema.viewsLog.userId),
+                notLike(schema.viewsLog.resourceId, "/admin%"),
+              )
+            : and(
+                eq(schema.viewsLog.resourceType, "page"),
+                isNull(schema.viewsLog.userId),
+                notLike(schema.viewsLog.resourceId, "/admin%"),
+                gte(schema.viewsLog.createdAt, cStart),
+                lte(schema.viewsLog.createdAt, cEnd),
+              ),
         ),
       db
         .select({ count: sql<number>`count(*)` })
@@ -4368,13 +4453,22 @@ export async function getPostgresReportsSummary(
         db
           .select({ count: sql<number>`count(distinct ${schema.viewsLog.visitorId})` })
           .from(schema.viewsLog)
-          .where(and(gte(schema.viewsLog.createdAt, pStart), lte(schema.viewsLog.createdAt, pEnd))),
+          .where(
+            and(
+              isNull(schema.viewsLog.userId),
+              notLike(schema.viewsLog.resourceId, "/admin%"),
+              gte(schema.viewsLog.createdAt, pStart),
+              lte(schema.viewsLog.createdAt, pEnd),
+            ),
+          ),
         db
           .select({ count: sql<number>`count(*)` })
           .from(schema.viewsLog)
           .where(
             and(
               eq(schema.viewsLog.resourceType, "page"),
+              isNull(schema.viewsLog.userId),
+              notLike(schema.viewsLog.resourceId, "/admin%"),
               gte(schema.viewsLog.createdAt, pStart),
               lte(schema.viewsLog.createdAt, pEnd),
             ),

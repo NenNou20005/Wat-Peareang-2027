@@ -4382,6 +4382,11 @@ ${allUrls
       const device = body?.device || "desktop";
       const auth = await authenticateRequest(request);
 
+      // Exclude admin and super_admin from visitor session tracking
+      if (auth.user?.role === "admin" || auth.user?.role === "super_admin") {
+        return json({ success: true, sessionId });
+      }
+
       await db.trackVisitorSession({
         sessionId,
         userAgent: userAgent || body?.userAgent,
@@ -4418,6 +4423,12 @@ ${allUrls
       }
 
       const auth = await authenticateRequest(request);
+
+      // Exclude admin and super_admin from visitor album/image view tracking
+      if (auth.user?.role === "admin" || auth.user?.role === "super_admin") {
+        return json({ success: true, recorded: false, deduplicated: true });
+      }
+
       const result = await db.recordView({
         resourceType,
         resourceId: String(resourceId).trim(),
