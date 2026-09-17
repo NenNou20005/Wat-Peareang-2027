@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { AdminLayout } from "@/components/admin/AdminLayout";
 import {
   Plus,
@@ -15,6 +15,11 @@ import {
   Video,
   RefreshCw,
   Check,
+  ArrowUp,
+  ArrowDown,
+  Save,
+  CheckSquare,
+  Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,6 +40,7 @@ import {
   useCreateAlbum,
   useUpdateAlbum,
   useDeleteAlbum,
+  useReorderAlbums,
   type AdminAlbum,
 } from "@/hooks/useAdminData";
 import { useAlbumPhotos } from "@/hooks/useArchiveData";
@@ -264,25 +270,141 @@ function AdminAlbumsPage() {
   const [selectedYear, setSelectedYear] = useState<string>("all");
   const [page, setPage] = useState(1);
 
+  const hasSearch = search.trim().length > 0;
+  const isScoped = selectedFestival !== "all" && selectedYear !== "all";
+  const effectiveLimit = isScoped ? 1000 : 24;
+
   // Queries
   const { data: festivals = [] } = useAdminFestivals();
   const { data: years = [] } = useAdminYears();
   const { data: albumsData, isLoading: loading } = useAdminAlbums({
-    page,
-    limit: 24,
+    page: isScoped ? 1 : page,
+    limit: effectiveLimit,
     search,
     festivalId: selectedFestival,
     year: selectedYear,
   });
 
-  const albums = albumsData?.albums || [];
+  const fetchedAlbums = useMemo(() => albumsData?.albums || [], [albumsData?.albums]);
+  const albums = fetchedAlbums;
   const totalPages = albumsData?.totalPages || 1;
   const totalCount = albumsData?.total || 0;
+  const isScopeFullyLoaded = isScoped ? totalCount === fetchedAlbums.length : true;
+  const isReorderActive = isScoped && !hasSearch && isScopeFullyLoaded;
+
+  // Local reorder & selection state
+  const [localAlbums, setLocalAlbums] = useState<AdminAlbum[]>([]);
+  const [hasOrderChanged, setHasOrderChanged] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setLocalAlbums(fetchedAlbums);
+    setHasOrderChanged(false);
+    setSelectedIds(new Set());
+  }, [fetchedAlbums, selectedFestival, selectedYear, search, page]);
+
+  const toggleSelectAlbum = (id: string) => {
+    if (!isReorderActive) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const isAllSelected =
+    isReorderActive && localAlbums.length > 0 && localAlbums.every((a) => selectedIds.has(a.id));
+
+  const toggleSelectAll = () => {
+    if (!isReorderActive) return;
+    if (isAllSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(localAlbums.map((a) => a.id)));
+    }
+  };
+
+  const canMoveUp = useMemo(() => {
+    if (!isReorderActive || selectedIds.size === 0 || localAlbums.length <= 1) return false;
+    for (let i = 1; i < localAlbums.length; i++) {
+      if (selectedIds.has(localAlbums[i]!.id) && !selectedIds.has(localAlbums[i - 1]!.id)) {
+        return true;
+      }
+    }
+    return false;
+  }, [isReorderActive, selectedIds, localAlbums]);
+
+  const canMoveDown = useMemo(() => {
+    if (!isReorderActive || selectedIds.size === 0 || localAlbums.length <= 1) return false;
+    for (let i = 0; i < localAlbums.length - 1; i++) {
+      if (selectedIds.has(localAlbums[i]!.id) && !selectedIds.has(localAlbums[i + 1]!.id)) {
+        return true;
+      }
+    }
+    return false;
+  }, [isReorderActive, selectedIds, localAlbums]);
+
+  const handleMove = (direction: "up" | "down") => {
+    if (!isReorderActive || selectedIds.size === 0 || localAlbums.length <= 1) return;
+
+    const items = [...localAlbums];
+
+    if (direction === "up") {
+      let moved = false;
+      for (let i = 1; i < items.length; i++) {
+        if (selectedIds.has(items[i]!.id) && !selectedIds.has(items[i - 1]!.id)) {
+          const temp = items[i]!;
+          items[i] = items[i - 1]!;
+          items[i - 1] = temp;
+          moved = true;
+        }
+      }
+      if (moved) {
+        setLocalAlbums(items);
+        setHasOrderChanged(true);
+      }
+    } else {
+      let moved = false;
+      for (let i = items.length - 2; i >= 0; i--) {
+        if (selectedIds.has(items[i]!.id) && !selectedIds.has(items[i + 1]!.id)) {
+          const temp = items[i]!;
+          items[i] = items[i + 1]!;
+          items[i + 1] = temp;
+          moved = true;
+        }
+      }
+      if (moved) {
+        setLocalAlbums(items);
+        setHasOrderChanged(true);
+      }
+    }
+  };
 
   // Mutations
   const createAlbumMutation = useCreateAlbum();
   const updateAlbumMutation = useUpdateAlbum();
   const deleteAlbumMutation = useDeleteAlbum();
+  const reorderAlbumsMutation = useReorderAlbums();
+
+  const handleSaveOrder = async () => {
+    if (!isReorderActive || !hasOrderChanged) return;
+    try {
+      await reorderAlbumsMutation.mutateAsync({
+        festivalId: selectedFestival,
+        year: Number(selectedYear),
+        items: localAlbums.map((alb, idx) => ({
+          id: alb.id,
+          sortOrder: idx + 1,
+        })),
+      });
+      toast.success("បានរក្សាទុកលំដាប់ Albums ដោយជោគជ័យ!");
+      setHasOrderChanged(false);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការរក្សាទុកលំដាប់ Albums";
+      toast.error(msg);
+    }
+  };
 
   // Modals
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -460,6 +582,117 @@ function AdminAlbumsPage() {
           </select>
         </div>
 
+        {/* Scoped Reordering Toolbar */}
+        {isReorderActive ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-gold/40 bg-card p-3 shadow-xs">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={toggleSelectAll}
+                disabled={localAlbums.length === 0}
+                className="h-8 rounded-full text-xs"
+              >
+                {isAllSelected ? (
+                  <>
+                    <CheckSquare className="mr-1.5 h-3.5 w-3.5 text-gold" /> ដោះការជ្រើសរើស (Deselect All)
+                  </>
+                ) : (
+                  <>
+                    <Square className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" /> ជ្រើសរើសទាំងអស់ (Select All)
+                  </>
+                )}
+              </Button>
+
+              {selectedIds.size > 0 && (
+                <span className="rounded-full bg-gold/15 px-2.5 py-0.5 text-xs font-bold text-gold">
+                  បានជ្រើសរើស {toKhmerNumber(selectedIds.size)} / {toKhmerNumber(localAlbums.length)}
+                </span>
+              )}
+
+              {hasOrderChanged && (
+                <span className="rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 px-2.5 py-0.5 text-xs font-medium">
+                  ● មានការកែប្រែលំដាប់មិនទាន់រក្សាទុក
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center rounded-xl border border-border bg-background p-0.5">
+                <button
+                  type="button"
+                  onClick={() => handleMove("up")}
+                  disabled={!canMoveUp}
+                  title="រំកិលឡើងលើ (Move Up)"
+                  className="p-1.5 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:pointer-events-none rounded-lg hover:bg-secondary transition-colors cursor-pointer"
+                >
+                  <ArrowUp className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMove("down")}
+                  disabled={!canMoveDown}
+                  title="រំកិលចុះក្រោម (Move Down)"
+                  className="p-1.5 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:pointer-events-none rounded-lg hover:bg-secondary transition-colors cursor-pointer"
+                >
+                  <ArrowDown className="h-4 w-4" />
+                </button>
+              </div>
+
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleSaveOrder}
+                disabled={!hasOrderChanged || reorderAlbumsMutation.isPending}
+                className="h-8 rounded-full bg-gold text-primary-foreground font-medium hover:bg-gold/90 shadow-soft"
+              >
+                {reorderAlbumsMutation.isPending ? (
+                  <>
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5 animate-spin" /> កំពុងរក្សាទុក...
+                  </>
+                ) : (
+                  <>
+                    <Save className="mr-1.5 h-3.5 w-3.5" /> រក្សាទុកលំដាប់
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        ) : isScoped && hasSearch ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
+            <div className="flex items-center gap-2">
+              <span className="text-base">⚠️</span>
+              <span>
+                មិនអាចរៀបលំដាប់ក្នុងពេលស្វែងរកបានទេ។ សូមលុបពាក្យស្វែងរកជាមុនសិន ដើម្បីរៀបចំ Albums ទាំងអស់ក្នុងពិធីបុណ្យ និងឆ្នាំនេះ។
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setSearch("")}
+              className="h-7 text-xs rounded-full border-amber-500/40 hover:bg-amber-500/20"
+            >
+              លុបការស្វែងរក
+            </Button>
+          </div>
+        ) : isScoped && !isScopeFullyLoaded ? (
+          <div className="flex items-center gap-2 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
+            <span className="text-base">⚠️</span>
+            <span>
+              មិនទាន់អាចរៀបលំដាប់បានទេ ព្រោះទិន្នន័យមិនទាន់បានទាញយកពេញលេញ ({toKhmerNumber(localAlbums.length)} / {toKhmerNumber(totalCount)} Albums)។
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 rounded-2xl border border-dashed border-border bg-card/60 p-3 text-xs text-muted-foreground">
+            <span className="text-base">💡</span>
+            <span>
+              ដើម្បីរៀបលំដាប់ Albums (Move Up / Down) សូមជ្រើសរើស <strong>ពិធីបុណ្យ</strong> និង <strong>ឆ្នាំ</strong> ជាក់លាក់មួយនៅក្នុង Filter ខាងលើ។
+            </span>
+          </div>
+        )}
+
         {/* Albums Grid */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {loading ? (
@@ -467,18 +700,22 @@ function AdminAlbumsPage() {
               <RefreshCw className="mx-auto mb-2 h-6 w-6 animate-spin text-gold" />
               កំពុងទាញយក Albums...
             </div>
-          ) : albums.length === 0 ? (
+          ) : localAlbums.length === 0 ? (
             <div className="col-span-full py-16 text-center text-xs text-muted-foreground rounded-3xl border border-border/80 bg-card">
               រកមិនឃើញ Album ណាឡើយ។
             </div>
           ) : (
-            albums.map((album) => {
+            localAlbums.map((album, index) => {
               const fest = festivals.find((f) => f.id === album.festivalId);
               const coverSrc = album.coverImage || fest?.coverUrl || `/assets/fest-${album.festivalId}.jpg`;
+              const isSelected = isReorderActive && selectedIds.has(album.id);
               return (
                 <div
                   key={album.id}
-                  className="rounded-3xl border border-border/80 bg-card p-4 shadow-soft transition-all hover:shadow-card flex flex-col justify-between"
+                  className={cn(
+                    "rounded-3xl border bg-card p-4 shadow-soft transition-all hover:shadow-card flex flex-col justify-between",
+                    isSelected ? "ring-2 ring-gold border-gold/80" : "border-border/80",
+                  )}
                 >
                   <div className="space-y-3">
                     {/* Album Cover Thumbnail */}
@@ -498,6 +735,31 @@ function AdminAlbumsPage() {
                         className="relative z-[1] max-h-full max-w-full object-contain transition-transform duration-300 hover:scale-105"
                       />
                       <div className="absolute inset-0 z-[2] bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-60 pointer-events-none" />
+
+                      {/* Scoped Checkbox / Position Order Badge */}
+                      {isReorderActive && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleSelectAlbum(album.id);
+                          }}
+                          title={isSelected ? "ដកចេញពីការជ្រើសរើស" : "ជ្រើសរើសដើម្បីរៀបលំដាប់"}
+                          className={cn(
+                            "absolute top-2 left-2 z-[4] flex items-center justify-center h-6 min-w-6 px-1.5 rounded-lg transition-all cursor-pointer shadow-md",
+                            isSelected
+                              ? "bg-gold text-primary-foreground font-bold"
+                              : "bg-black/65 text-white/90 hover:bg-black/80 hover:text-white border border-white/20 text-[10px] font-semibold",
+                          )}
+                        >
+                          {isSelected ? (
+                            <Check className="h-3.5 w-3.5 stroke-[3]" />
+                          ) : (
+                            <span>#{toKhmerNumber(index + 1)}</span>
+                          )}
+                        </button>
+                      )}
+
                       <span className="absolute bottom-2 left-2 z-[3] rounded-full bg-black/65 px-2 py-0.5 text-[10px] text-white backdrop-blur-xs flex items-center gap-1">
                         <ImageIcon className="h-3 w-3 text-gold" /> {toKhmerNumber(album.photoCount)} រូប
                       </span>
@@ -606,7 +868,7 @@ function AdminAlbumsPage() {
         </div>
 
         {/* Pagination */}
-        {totalPages > 1 && (
+        {!isScoped && totalPages > 1 && (
           <div className="flex items-center justify-between pt-4 border-t border-border/50">
             <span className="text-xs text-muted-foreground">
               ទំព័រទី {page} នៃ {totalPages} (សរុប {totalCount} Albums)
@@ -636,7 +898,6 @@ function AdminAlbumsPage() {
           </div>
         )}
 
-        {/* Modal: Create Album */}
         {/* Modal: Create Album */}
         <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
           <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl p-6 shadow-card">

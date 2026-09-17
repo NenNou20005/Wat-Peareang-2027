@@ -166,6 +166,7 @@ export async function getPostgresAlbums(filter?: {
         a.title,
         a.description,
         a.cover_image,
+        a.sort_order,
         a.photo_count,
         a.views_count,
         a.likes_count,
@@ -202,7 +203,7 @@ export async function getPostgresAlbums(filter?: {
         ORDER BY album_id, created_at ASC, id ASC
       ) fi ON fi.album_id = a.id
       WHERE ${filterClause}
-      ORDER BY a.year DESC, f.created_at ASC, a.id ASC;
+      ORDER BY a.year DESC, f.created_at ASC, a.sort_order ASC, a.created_at ASC, a.id ASC;
     `);
 
     const rows = (res.rows || []) as any[];
@@ -244,6 +245,7 @@ export async function getPostgresAlbums(filter?: {
         viewsCount: row.views_count,
         likesCount: row.likes_count,
         status: row.status,
+        sortOrder: row.sort_order !== undefined && row.sort_order !== null ? Number(row.sort_order) : 0,
       };
     });
 
@@ -820,7 +822,8 @@ export async function getAdminAlbumsPaginated(params: {
   status?: string | undefined;
 }): Promise<AdminPaginatedAlbumsResult> {
   const page = Math.max(1, params.page || 1);
-  const limit = Math.max(1, Math.min(100, params.limit || 20));
+  const maxLimit = params.festivalId && params.year ? 2000 : 100;
+  const limit = Math.max(1, Math.min(maxLimit, params.limit || 20));
   const offset = (page - 1) * limit;
 
   const db = getDrizzleDb();
@@ -881,7 +884,12 @@ export async function getAdminAlbumsPaginated(params: {
       .from(schema.albums)
       .innerJoin(schema.festivals, eq(schema.albums.festivalId, schema.festivals.id))
       .where(whereClause)
-      .orderBy(desc(schema.albums.year), asc(schema.albums.title))
+      .orderBy(
+        desc(schema.albums.year),
+        asc(schema.albums.sortOrder),
+        asc(schema.albums.createdAt),
+        asc(schema.albums.id),
+      )
       .limit(limit)
       .offset(offset);
 
@@ -911,6 +919,7 @@ export async function getAdminAlbumsPaginated(params: {
         viewsCount: album.viewsCount,
         likesCount: album.likesCount,
         status: album.status,
+        sortOrder: album.sortOrder ?? 0,
       };
     });
 
@@ -6430,6 +6439,127 @@ export async function reorderPostgresEvents(eventIds: string[]): Promise<boolean
         .where(eq(schema.events.id, eventId));
     }
   }
+
+  return true;
+}
+
+/**
+ * Admin: Reorder albums within a specific Festival + Year scope
+ */
+export async function reorderPostgresAlbums(
+  festivalId: string,
+  year: number,
+  items: Array<{ id: string; sortOrder: number }>,
+): Promise<boolean> {
+  const db = getDrizzleDb();
+  if (!db || !isPostgresConfigured()) {
+    throw new Error("Database connection is not configured.");
+  }
+
+  if (
+    !festivalId ||
+    typeof festivalId !== "string" ||
+    !festivalId.trim() ||
+    !year ||
+    typeof year !== "number" ||
+    isNaN(year) ||
+    !Array.isArray(items) ||
+    items.length === 0
+  ) {
+    throw new Error("Invalid reorder parameters.");
+  }
+
+  const albumIds = items.map((it) => it.id);
+  // Check for duplicate album IDs in input
+  if (new Set(albumIds).size !== albumIds.length) {
+    throw new Error("Duplicate album IDs detected in reorder list.");
+  }
+
+  // 1. Fetch ALL active (non-trashed) albums in this Festival + Year scope from PostgreSQL
+  const allScopeAlbums = await db
+    .select({
+      id: schema.albums.id,
+      festivalId: schema.albums.festivalId,
+      year: schema.albums.year,
+      status: schema.albums.status,
+    })
+    .from(schema.albums)
+    .where(
+      and(
+        eq(schema.albums.festivalId, festivalId),
+        eq(schema.albums.year, year),
+        ne(schema.albums.status, "trashed"),
+      ),
+    );
+
+  const N = allScopeAlbums.length;
+
+  // Verify count matches scope exactly
+  if (items.length !== N) {
+    throw new Error(
+      `ការរៀបលំដាប់ត្រូវតែរួមបញ្ចូល Albums ទាំងអស់ក្នុងបុណ្យ "${festivalId}" និងឆ្នាំ ${year} (សរុប ${N} Albums)។ មិនអនុញ្ញាតឱ្យរៀបលំដាប់លើផ្នែកខ្លះនៃទិន្នន័យ (Partial/Search Results) ឡើយ។`,
+    );
+  }
+
+  const activeScopeIdSet = new Set(allScopeAlbums.map((a) => a.id));
+
+  // 2. Verify all target items exist, belong to this scope, and are NOT trashed
+  const targetAlbums = await db
+    .select({
+      id: schema.albums.id,
+      festivalId: schema.albums.festivalId,
+      year: schema.albums.year,
+      status: schema.albums.status,
+    })
+    .from(schema.albums)
+    .where(inArray(schema.albums.id, albumIds));
+
+  if (targetAlbums.length !== albumIds.length) {
+    throw new Error("រកមិនឃើញ Album មួយចំនួនក្នុងប្រព័ន្ធទិន្នន័យឡើយ (One or more albums were not found)។");
+  }
+
+  for (const alb of targetAlbums) {
+    if (alb.status === "trashed") {
+      throw new Error(`Album "${alb.id}" ស្ថិតក្នុងធុងសំរាម (trashed) មិនអនុញ្ញាតឱ្យរៀបលំដាប់ឡើយ។`);
+    }
+    if (alb.festivalId !== festivalId || alb.year !== year) {
+      throw new Error(
+        `Album "${alb.id}" មិនមែនជារបស់បុណ្យ "${festivalId}" និងឆ្នាំ ${year} ឡើយ (Cross-scope reordering is prohibited)។`,
+      );
+    }
+    if (!activeScopeIdSet.has(alb.id)) {
+      throw new Error(`Album "${alb.id}" មិនមែនជា Album សកម្មក្នុង scope នេះឡើយ។`);
+    }
+  }
+
+  // Ensure no active album in scope is missing from the request
+  const inputIdSet = new Set(albumIds);
+  for (const alb of allScopeAlbums) {
+    if (!inputIdSet.has(alb.id)) {
+      throw new Error(`ខ្វះ Album "${alb.id}" ក្នុងបញ្ជីរៀបលំដាប់។ ត្រូវរួមបញ្ចូល Albums សកម្មទាំងអស់ក្នុង Festival + Year scope នេះ។`);
+    }
+  }
+
+  // 3. Validate sortOrder: must be sequential integers 1..N
+  const sortedOrders = items.map((it) => it.sortOrder).sort((a, b) => a - b);
+  for (let i = 0; i < N; i++) {
+    const val = sortedOrders[i];
+    if (typeof val !== "number" || !Number.isInteger(val) || val !== i + 1) {
+      throw new Error(
+        `តម្លៃ sortOrder ត្រូវតែជាចំនួនគត់ជាប់គ្នាពី 1 ដល់ ${N} (Sequential integers 1..N) ដោយគ្មានចន្លោះ ឬជាន់គ្នាឡើយ។`,
+      );
+    }
+  }
+
+  // 4. Atomic update using Drizzle transaction
+  await db.transaction(async (tx) => {
+    for (const item of items) {
+      await tx
+        .update(schema.albums)
+        .set({ sortOrder: item.sortOrder, updatedAt: new Date() })
+        .where(eq(schema.albums.id, item.id));
+    }
+  });
 
   return true;
 }

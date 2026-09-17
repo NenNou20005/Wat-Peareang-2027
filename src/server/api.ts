@@ -34,6 +34,7 @@ import {
   updatePostgresEvent,
   deletePostgresEvent,
   reorderPostgresEvents,
+  reorderPostgresAlbums,
 } from "./queries";
 import {
   authenticateRequest,
@@ -1306,6 +1307,65 @@ ${allUrls
     const auth = await requireAuth(request, "manage_albums");
     if (auth instanceof Response) return auth;
     const currentUser = auth.user;
+
+    // POST /api/admin/albums/reorder
+    if (pathname === "/api/admin/albums/reorder" && method === "POST") {
+      try {
+        const body = await request.json();
+        const { festivalId, year, items } = body;
+
+        if (!festivalId || typeof festivalId !== "string" || !festivalId.trim()) {
+          return json({ success: false, error: "សូមបញ្ជាក់ Festival ID" }, 400);
+        }
+        const numYear = Number(year);
+        if (!numYear || isNaN(numYear)) {
+          return json({ success: false, error: "សូមបញ្ជាក់ឆ្នាំ" }, 400);
+        }
+        if (!Array.isArray(items) || items.length === 0) {
+          return json({ success: false, error: "បញ្ជី Albums សម្រាប់រៀបលំដាប់មិនត្រឹមត្រូវឡើយ" }, 400);
+        }
+
+        // Validate items shape & unique sortOrder values
+        const sortOrders = new Set<number>();
+        for (const it of items) {
+          if (!it.id || typeof it.id !== "string" || typeof it.sortOrder !== "number" || isNaN(it.sortOrder)) {
+            return json({ success: false, error: "ទម្រង់ទិន្នន័យ Album រៀបលំដាប់មិនត្រឹមត្រូវឡើយ" }, 400);
+          }
+          if (sortOrders.has(it.sortOrder)) {
+            return json({ success: false, error: "រកឃើញតម្លៃ sortOrder ជាន់គ្នា (Duplicate sortOrder values)" }, 400);
+          }
+          sortOrders.add(it.sortOrder);
+        }
+
+        await reorderPostgresAlbums(festivalId.trim(), numYear, items);
+
+        // Also sync in-memory db data if available
+        const memoryAlbums = db.getAlbums();
+        for (const item of items) {
+          const match = memoryAlbums.find((a) => a.id === item.id);
+          if (match) {
+            match.sortOrder = item.sortOrder;
+          }
+        }
+
+        db.logActivity({
+          userId: currentUser.id,
+          userName: currentUser.name,
+          userRole: currentUser.role,
+          action: "REORDER_ALBUMS",
+          resource: "ALBUM",
+          resourceId: `${festivalId}-${numYear}`,
+          details: `បានរៀបលំដាប់ ${items.length} Albums សម្រាប់បុណ្យ «${festivalId}» ឆ្នាំ ${numYear}`,
+          ip,
+        });
+
+        return json({ success: true, message: "បានរៀបលំដាប់ Albums ដោយជោគជ័យ។" });
+      } catch (err: unknown) {
+        logger.error("Failed to reorder albums", { error: err });
+        const errorMsg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការរៀបលំដាប់ Albums";
+        return json({ success: false, error: errorMsg }, 500);
+      }
+    }
 
     // POST /api/admin/albums
     if (pathname === "/api/admin/albums" && method === "POST") {

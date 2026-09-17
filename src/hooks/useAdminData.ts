@@ -74,6 +74,7 @@ export interface AdminAlbum {
   coverImage?: string | undefined;
   createdAt?: string | undefined;
   status?: string | undefined;
+  sortOrder?: number | undefined;
   festival?:
     | {
         id: string;
@@ -1257,6 +1258,35 @@ export function useReorderEvents() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["admin", "events"] }),
+        queryClient.invalidateQueries({ queryKey: ["archive", "events"] }),
+      ]);
+    },
+  });
+}
+
+export function useReorderAlbums() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      festivalId: string;
+      year: number;
+      items: Array<{ id: string; sortOrder: number }>;
+    }) => {
+      const res = await fetch("/api/admin/albums/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Failed to reorder albums");
+      }
+      return json.data;
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["admin", "albums"] }),
+        queryClient.invalidateQueries({ queryKey: ["archive", "albums"] }),
         queryClient.invalidateQueries({ queryKey: ["archive", "events"] }),
       ]);
     },
