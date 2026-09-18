@@ -6589,11 +6589,12 @@ export async function reorderPostgresEvents(eventIds: string[]): Promise<boolean
 }
 
 /**
- * Admin: Reorder albums within a specific Festival + Year scope
+ * Admin: Reorder albums within a specific Festival + Year + parentAlbumId scope
  */
 export async function reorderPostgresAlbums(
   festivalId: string,
   year: number,
+  parentAlbumId: string | null | undefined,
   items: Array<{ id: string; sortOrder: number }>,
 ): Promise<boolean> {
   const db = getDrizzleDb();
@@ -6620,12 +6621,22 @@ export async function reorderPostgresAlbums(
     throw new Error("Duplicate album IDs detected in reorder list.");
   }
 
-  // 1. Fetch ALL active (non-trashed) albums in this Festival + Year scope from PostgreSQL
+  const cleanParentAlbumId =
+    parentAlbumId && typeof parentAlbumId === "string" && parentAlbumId.trim() !== "" && parentAlbumId.trim() !== "null"
+      ? parentAlbumId.trim()
+      : null;
+
+  const parentCondition = cleanParentAlbumId
+    ? eq(schema.albums.parentAlbumId, cleanParentAlbumId)
+    : isNull(schema.albums.parentAlbumId);
+
+  // 1. Fetch ALL active (non-trashed) sibling albums in this Festival + Year + parentAlbumId scope from PostgreSQL
   const allScopeAlbums = await db
     .select({
       id: schema.albums.id,
       festivalId: schema.albums.festivalId,
       year: schema.albums.year,
+      parentAlbumId: schema.albums.parentAlbumId,
       status: schema.albums.status,
     })
     .from(schema.albums)
@@ -6633,16 +6644,20 @@ export async function reorderPostgresAlbums(
       and(
         eq(schema.albums.festivalId, festivalId),
         eq(schema.albums.year, year),
+        parentCondition,
         ne(schema.albums.status, "trashed"),
       ),
     );
 
   const N = allScopeAlbums.length;
+  const scopeDescription = cleanParentAlbumId
+    ? `ក្រោម Parent Album "${cleanParentAlbumId}" ក្នុងបុណ្យ "${festivalId}" ឆ្នាំ ${year}`
+    : `កម្រិត Root (គ្មាន Parent) ក្នុងបុណ្យ "${festivalId}" ឆ្នាំ ${year}`;
 
   // Verify count matches scope exactly
   if (items.length !== N) {
     throw new Error(
-      `ការរៀបលំដាប់ត្រូវតែរួមបញ្ចូល Albums ទាំងអស់ក្នុងបុណ្យ "${festivalId}" និងឆ្នាំ ${year} (សរុប ${N} Albums)។ មិនអនុញ្ញាតឱ្យរៀបលំដាប់លើផ្នែកខ្លះនៃទិន្នន័យ (Partial/Search Results) ឡើយ។`,
+      `ការរៀបលំដាប់ត្រូវតែរួមបញ្ចូល Albums ទាំងអស់${scopeDescription} (សរុប ${N} Albums)។ មិនអនុញ្ញាតឱ្យរៀបលំដាប់លើផ្នែកខ្លះនៃទិន្នន័យ (Partial/Search Results) ឡើយ។`,
     );
   }
 
@@ -6654,6 +6669,7 @@ export async function reorderPostgresAlbums(
       id: schema.albums.id,
       festivalId: schema.albums.festivalId,
       year: schema.albums.year,
+      parentAlbumId: schema.albums.parentAlbumId,
       status: schema.albums.status,
     })
     .from(schema.albums)
@@ -6672,6 +6688,12 @@ export async function reorderPostgresAlbums(
         `Album "${alb.id}" មិនមែនជារបស់បុណ្យ "${festivalId}" និងឆ្នាំ ${year} ឡើយ (Cross-scope reordering is prohibited)។`,
       );
     }
+    const albParent = alb.parentAlbumId || null;
+    if (albParent !== cleanParentAlbumId) {
+      throw new Error(
+        `Album "${alb.id}" មិនស្ថិតក្នុងកម្រិត Parent ដូចគ្នាឡើយ (Cross-parent reordering is prohibited)។ Parent រំពឹងទុក៖ "${cleanParentAlbumId || "Root"}", ប៉ុន្តែជាក់ស្តែង៖ "${albParent || "Root"}"។`,
+      );
+    }
     if (!activeScopeIdSet.has(alb.id)) {
       throw new Error(`Album "${alb.id}" មិនមែនជា Album សកម្មក្នុង scope នេះឡើយ។`);
     }
@@ -6681,7 +6703,7 @@ export async function reorderPostgresAlbums(
   const inputIdSet = new Set(albumIds);
   for (const alb of allScopeAlbums) {
     if (!inputIdSet.has(alb.id)) {
-      throw new Error(`ខ្វះ Album "${alb.id}" ក្នុងបញ្ជីរៀបលំដាប់។ ត្រូវរួមបញ្ចូល Albums សកម្មទាំងអស់ក្នុង Festival + Year scope នេះ។`);
+      throw new Error(`ខ្វះ Album "${alb.id}" ក្នុងបញ្ជីរៀបលំដាប់។ ត្រូវរួមបញ្ចូល Albums សកម្មទាំងអស់${scopeDescription}។`);
     }
   }
 

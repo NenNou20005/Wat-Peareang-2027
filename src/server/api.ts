@@ -1312,7 +1312,7 @@ ${allUrls
     if (pathname === "/api/admin/albums/reorder" && method === "POST") {
       try {
         const body = await request.json();
-        const { festivalId, year, items } = body;
+        const { festivalId, year, parentAlbumId, items } = body;
 
         if (!festivalId || typeof festivalId !== "string" || !festivalId.trim()) {
           return json({ success: false, error: "សូមបញ្ជាក់ Festival ID" }, 400);
@@ -1325,19 +1325,78 @@ ${allUrls
           return json({ success: false, error: "បញ្ជី Albums សម្រាប់រៀបលំដាប់មិនត្រឹមត្រូវឡើយ" }, 400);
         }
 
-        // Validate items shape & unique sortOrder values
+        const cleanParentAlbumId =
+          parentAlbumId && typeof parentAlbumId === "string" && parentAlbumId.trim() !== "" && parentAlbumId.trim() !== "null"
+            ? parentAlbumId.trim()
+            : null;
+
+        // Validate items shape & unique IDs / sortOrder values
         const sortOrders = new Set<number>();
+        const itemIds = new Set<string>();
         for (const it of items) {
           if (!it.id || typeof it.id !== "string" || typeof it.sortOrder !== "number" || isNaN(it.sortOrder)) {
             return json({ success: false, error: "ទម្រង់ទិន្នន័យ Album រៀបលំដាប់មិនត្រឹមត្រូវឡើយ" }, 400);
           }
+          if (itemIds.has(it.id)) {
+            return json({ success: false, error: "រកឃើញ Album ID ជាន់គ្នា (Duplicate album IDs)" }, 400);
+          }
+          itemIds.add(it.id);
+
           if (sortOrders.has(it.sortOrder)) {
             return json({ success: false, error: "រកឃើញតម្លៃ sortOrder ជាន់គ្នា (Duplicate sortOrder values)" }, 400);
           }
           sortOrders.add(it.sortOrder);
         }
 
-        await reorderPostgresAlbums(festivalId.trim(), numYear, items);
+        // Validate sortOrder is sequential 1..N
+        const N = items.length;
+        const sortedOrders = items.map((it) => it.sortOrder).sort((a, b) => a - b);
+        for (let i = 0; i < N; i++) {
+          if (sortedOrders[i] !== i + 1) {
+            return json(
+              {
+                success: false,
+                error: `តម្លៃ sortOrder ត្រូវតែជាចំនួនគត់ជាប់គ្នាពី 1 ដល់ ${N} (Sequential integers 1..N) ដោយគ្មានចន្លោះ ឬជាន់គ្នាឡើយ។`,
+              },
+              400,
+            );
+          }
+        }
+
+        if (isPostgresConfigured()) {
+          await reorderPostgresAlbums(festivalId.trim(), numYear, cleanParentAlbumId, items);
+        } else {
+          // In-memory fallback validation
+          const memoryScopeAlbums = db.getAlbums().filter((a) => {
+            if (a.status === "trashed") return false;
+            if (a.festivalId !== festivalId.trim() || a.year !== numYear) return false;
+            const pId = a.parentAlbumId || null;
+            return pId === cleanParentAlbumId;
+          });
+
+          if (memoryScopeAlbums.length !== N) {
+            return json(
+              {
+                success: false,
+                error: `ការរៀបលំដាប់ត្រូវតែរួមបញ្ចូល Albums ទាំងអស់ក្នុង scope នេះ (សរុប ${memoryScopeAlbums.length} Albums)។`,
+              },
+              400,
+            );
+          }
+
+          const scopeMemoryIdSet = new Set(memoryScopeAlbums.map((a) => a.id));
+          for (const it of items) {
+            if (!scopeMemoryIdSet.has(it.id)) {
+              return json(
+                {
+                  success: false,
+                  error: `Album "${it.id}" មិនមែនជារបស់ scope នេះឡើយ (Cross-scope reordering is prohibited)។`,
+                },
+                400,
+              );
+            }
+          }
+        }
 
         // Also sync in-memory db data if available
         const memoryAlbums = db.getAlbums();
@@ -1347,15 +1406,19 @@ ${allUrls
             match.sortOrder = item.sortOrder;
           }
         }
+        if (typeof (db as any).save === "function") {
+          (db as any).save();
+        }
 
+        const scopeLabel = cleanParentAlbumId ? `ក្រោម Parent Album «${cleanParentAlbumId}» ` : "កម្រិត Root ";
         db.logActivity({
           userId: currentUser.id,
           userName: currentUser.name,
           userRole: currentUser.role,
           action: "REORDER_ALBUMS",
           resource: "ALBUM",
-          resourceId: `${festivalId}-${numYear}`,
-          details: `បានរៀបលំដាប់ ${items.length} Albums សម្រាប់បុណ្យ «${festivalId}» ឆ្នាំ ${numYear}`,
+          resourceId: `${festivalId}-${numYear}${cleanParentAlbumId ? `-${cleanParentAlbumId}` : ""}`,
+          details: `បានរៀបលំដាប់ ${items.length} Albums ${scopeLabel}សម្រាប់បុណ្យ «${festivalId}» ឆ្នាំ ${numYear}`,
           ip,
         });
 

@@ -297,16 +297,76 @@ function AdminAlbumsPage() {
   const isScopeFullyLoaded = isScoped ? totalCount === fetchedAlbums.length : true;
   const isReorderActive = isScoped && !hasSearch && isScopeFullyLoaded;
 
+  // Selected parent scope for ordering (null = Root albums, string = parent album ID)
+  const [selectedParentScope, setSelectedParentScope] = useState<string | null>(null);
+
+  // Reset selected parent scope when festival or year changes
+  useEffect(() => {
+    setSelectedParentScope(null);
+  }, [selectedFestival, selectedYear]);
+
+  // Derive available parents with children in this festival + year scope
+  const availableParents = useMemo(() => {
+    if (!isScoped) return [];
+    const parentMap = new Map<string, { id: string; title: string; count: number }>();
+    for (const alb of fetchedAlbums) {
+      if (alb.parentAlbumId) {
+        const pId = alb.parentAlbumId;
+        const existing = parentMap.get(pId);
+        if (existing) {
+          existing.count++;
+        } else {
+          const parentAlb = fetchedAlbums.find((a) => a.id === pId);
+          parentMap.set(pId, {
+            id: pId,
+            title: parentAlb ? parentAlb.title : pId,
+            count: 1,
+          });
+        }
+      }
+    }
+    return Array.from(parentMap.values());
+  }, [fetchedAlbums, isScoped]);
+
+  const rootCount = useMemo(() => {
+    return fetchedAlbums.filter((a) => !a.parentAlbumId).length;
+  }, [fetchedAlbums]);
+
+  // Sibling albums matching the current scope
+  const siblingAlbums = useMemo(() => {
+    if (!isScoped) return fetchedAlbums;
+    if (selectedParentScope) {
+      return fetchedAlbums.filter((a) => a.parentAlbumId === selectedParentScope);
+    }
+    return fetchedAlbums.filter((a) => !a.parentAlbumId);
+  }, [fetchedAlbums, isScoped, selectedParentScope]);
+
   // Local reorder & selection state
   const [localAlbums, setLocalAlbums] = useState<AdminAlbum[]>([]);
   const [hasOrderChanged, setHasOrderChanged] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    setLocalAlbums(fetchedAlbums);
+    if (isReorderActive) {
+      setLocalAlbums(siblingAlbums);
+    } else {
+      setLocalAlbums(fetchedAlbums);
+    }
     setHasOrderChanged(false);
     setSelectedIds(new Set());
-  }, [fetchedAlbums, selectedFestival, selectedYear, search, page]);
+  }, [siblingAlbums, isReorderActive, fetchedAlbums, search, page]);
+
+  const handleScopeChange = (newScope: string | null) => {
+    if (hasOrderChanged) {
+      const confirmed = window.confirm(
+        "អ្នកមានការកែប្រែលំដាប់មិនទាន់រក្សាទុក។ តើអ្នកពិតជាចង់ប្តូរកម្រិតដោយមិនរក្សាទុកឬទេ?",
+      );
+      if (!confirmed) return;
+    }
+    setSelectedParentScope(newScope);
+    setSelectedIds(new Set());
+    setHasOrderChanged(false);
+  };
 
   const toggleSelectAlbum = (id: string) => {
     if (!isReorderActive) return;
@@ -399,6 +459,7 @@ function AdminAlbumsPage() {
       await reorderAlbumsMutation.mutateAsync({
         festivalId: selectedFestival,
         year: Number(selectedYear),
+        parentAlbumId: selectedParentScope,
         items: localAlbums.map((alb, idx) => ({
           id: alb.id,
           sortOrder: idx + 1,
@@ -437,13 +498,13 @@ function AdminAlbumsPage() {
     if (movingAlbums.length === 0) return [];
     const movingSet = new Set(movingAlbums.map((a) => a.id));
     const parentMap = new Map<string, string | null>();
-    for (const a of localAlbums) {
+    for (const a of fetchedAlbums) {
       parentMap.set(a.id, a.parentAlbumId || null);
     }
     const scopeFestId = movingAlbums[0]?.festivalId;
     const scopeYr = movingAlbums[0]?.year;
 
-    return localAlbums.filter((cand) => {
+    return fetchedAlbums.filter((cand) => {
       if (cand.festivalId !== scopeFestId || cand.year !== scopeYr) return false;
       if (cand.status === "trashed") return false;
       if (movingSet.has(cand.id)) return false;
@@ -459,7 +520,7 @@ function AdminAlbumsPage() {
       }
       return true;
     });
-  }, [movingAlbums, localAlbums]);
+  }, [movingAlbums, fetchedAlbums]);
 
   const handleExecuteMove = async () => {
     if (movingAlbums.length === 0) return;
@@ -470,7 +531,7 @@ function AdminAlbumsPage() {
         targetParentAlbumId: targetParentId,
       });
       const targetTitle = targetParentId
-        ? localAlbums.find((a) => a.id === targetParentId)?.title || "Album មេ"
+        ? fetchedAlbums.find((a) => a.id === targetParentId)?.title || "Album មេ"
         : "កម្រិត Root (ថតចម្បង)";
       toast.success(
         albumIds.length === 1
@@ -836,6 +897,36 @@ function AdminAlbumsPage() {
         {isReorderActive ? (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-gold/40 bg-card p-3 shadow-xs">
             <div className="flex items-center gap-2 flex-wrap">
+              {/* Parent Scope Selector (Root vs Sub-albums) */}
+              {availableParents.length > 0 ? (
+                <div className="flex items-center gap-1.5 mr-1">
+                  <span className="text-xs font-semibold text-foreground whitespace-nowrap">
+                    📁 កម្រិត៖
+                  </span>
+                  <select
+                    value={selectedParentScope || "root"}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      handleScopeChange(val === "root" ? null : val);
+                    }}
+                    className="rounded-xl border border-gold/50 bg-background px-2.5 py-1 text-xs text-foreground font-medium focus:ring-1 focus:ring-gold"
+                  >
+                    <option value="root">
+                      📁 Root Albums ({toKhmerNumber(rootCount)})
+                    </option>
+                    {availableParents.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        ↳ Sub-albums ក្រោម «{p.title}» ({toKhmerNumber(p.count)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full bg-secondary/80 px-2.5 py-1 text-[11px] text-muted-foreground mr-1">
+                  📁 កម្រិត Root ({toKhmerNumber(localAlbums.length)})
+                </span>
+              )}
+
               <Button
                 type="button"
                 variant="outline"
@@ -955,7 +1046,7 @@ function AdminAlbumsPage() {
           <div className="flex items-center gap-2 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200">
             <span className="text-base">⚠️</span>
             <span>
-              មិនទាន់អាចរៀបលំដាប់បានទេ ព្រោះទិន្នន័យមិនទាន់បានទាញយកពេញលេញ ({toKhmerNumber(localAlbums.length)} / {toKhmerNumber(totalCount)} Albums)។
+              មិនទាន់អាចរៀបលំដាប់បានទេ ព្រោះទិន្នន័យមិនទាន់បានទាញយកពេញលេញ ({toKhmerNumber(fetchedAlbums.length)} / {toKhmerNumber(totalCount)} Albums)។
             </span>
           </div>
         ) : (
@@ -1089,7 +1180,7 @@ function AdminAlbumsPage() {
                         </span>
                         {album.parentAlbumId ? (
                           <span
-                            title={`Sub-album ក្រោម៖ ${localAlbums.find((a) => a.id === album.parentAlbumId)?.title || album.parentAlbumId}`}
+                            title={`Sub-album ក្រោម៖ ${fetchedAlbums.find((a) => a.id === album.parentAlbumId)?.title || album.parentAlbumId}`}
                             className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 px-2 py-0.5 text-[10px] font-semibold border border-blue-500/20"
                           >
                             <span>↳ Sub-album</span>

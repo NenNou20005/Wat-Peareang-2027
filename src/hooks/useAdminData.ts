@@ -1272,6 +1272,7 @@ export function useReorderAlbums() {
     mutationFn: async (payload: {
       festivalId: string;
       year: number;
+      parentAlbumId?: string | null | undefined;
       items: Array<{ id: string; sortOrder: number }>;
     }) => {
       const res = await fetch("/api/admin/albums/reorder", {
