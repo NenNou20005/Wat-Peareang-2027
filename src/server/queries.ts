@@ -42,6 +42,9 @@ export interface DbPhoto {
   downloadsCount?: number | undefined;
   sharesCount?: number | undefined;
   createdAt?: string | undefined;
+  sha256?: string | null | undefined;
+  width?: number | null | undefined;
+  height?: number | null | undefined;
 }
 
 export interface DbVideo {
@@ -415,6 +418,9 @@ export async function getPostgresPhotosForAlbum(albumId: string): Promise<DbPhot
         downloadsCount: img.downloadsCount,
         sharesCount: img.sharesCount,
         createdAt: img.createdAt ? img.createdAt.toISOString() : undefined,
+        sha256: img.sha256 || undefined,
+        width: img.width || undefined,
+        height: img.height || undefined,
       }));
     }
 
@@ -977,6 +983,9 @@ export interface AdminPaginatedImagesResult {
     status: string;
     uploadedBy?: string | null | undefined;
     createdAt: string;
+    sha256?: string | null | undefined;
+    width?: number | null | undefined;
+    height?: number | null | undefined;
   }>;
   total: number;
   page: number;
@@ -1091,6 +1100,9 @@ export async function getAdminImagesPaginated(params: {
       status: r.img.status,
       uploadedBy: r.img.uploadedBy,
       createdAt: r.img.createdAt.toISOString(),
+      sha256: r.img.sha256 || undefined,
+      width: r.img.width || undefined,
+      height: r.img.height || undefined,
     }));
 
     return {

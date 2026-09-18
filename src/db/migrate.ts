@@ -325,6 +325,12 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
         "updated_at" timestamp with time zone DEFAULT now() NOT NULL
       );`,
 
+      // Additive columns for images (Phase 1 Exact Duplicate Detection foundation)
+      `ALTER TABLE "images" ADD COLUMN IF NOT EXISTS "sha256" text;`,
+      `ALTER TABLE "images" ADD COLUMN IF NOT EXISTS "width" integer;`,
+      `ALTER TABLE "images" ADD COLUMN IF NOT EXISTS "height" integer;`,
+      `CREATE INDEX IF NOT EXISTS "idx_images_sha256" ON "images" ("sha256");`,
+
       // likes
       `CREATE TABLE IF NOT EXISTS "likes" (
         "id" serial PRIMARY KEY NOT NULL,

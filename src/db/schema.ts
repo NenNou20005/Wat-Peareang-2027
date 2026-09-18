@@ -131,6 +131,9 @@ export const images = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    sha256: text("sha256"),
+    width: integer("width"),
+    height: integer("height"),
   },
   (table) => [
     index("idx_images_album_id").on(table.albumId),
@@ -141,6 +144,7 @@ export const images = pgTable(
     index("idx_images_likes_count").on(table.likesCount),
     index("idx_images_uploaded_by").on(table.uploadedBy),
     index("idx_images_album_status").on(table.albumId, table.status),
+    index("idx_images_sha256").on(table.sha256),
   ],
 );
 

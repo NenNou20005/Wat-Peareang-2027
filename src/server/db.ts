@@ -116,6 +116,9 @@ export interface StoredImage {
   deletedAt?: string | undefined;
   createdAt: string;
   updatedAt?: string | undefined;
+  sha256?: string | null | undefined;
+  width?: number | null | undefined;
+  height?: number | null | undefined;
 }
 
 export interface StoredReport {
@@ -2468,6 +2471,9 @@ class Database {
             uploadedBy: img.uploadedBy || null,
             status: img.status || "published",
             createdAt: img.createdAt ? new Date(img.createdAt) : new Date(),
+            sha256: img.sha256 || null,
+            width: img.width || null,
+            height: img.height || null,
           });
 
           const [albumRow] = await tx

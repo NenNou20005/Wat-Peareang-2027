@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import sharp from "sharp";
 import { db, verifyPassword, hashPassword } from "./db";
 import { checkDbHealth, getDrizzleDb, isPostgresConfigured } from "../db/index";
 import * as schema from "../db/schema";
@@ -1863,6 +1864,28 @@ ${allUrls
           albumId,
         });
 
+        // Compute Phase 1 duplicate detection metadata (SHA-256 and dimensions) safely
+        let sha256: string | null = null;
+        try {
+          sha256 = crypto.createHash("sha256").update(buffer).digest("hex").toLowerCase();
+        } catch (err) {
+          logger.warn("Failed to compute SHA-256 hash for uploaded image", { error: String(err) });
+        }
+
+        let width: number | null = null;
+        let height: number | null = null;
+        try {
+          const metadata = await sharp(buffer).metadata();
+          if (typeof metadata.width === "number" && metadata.width > 0) {
+            width = metadata.width;
+          }
+          if (typeof metadata.height === "number" && metadata.height > 0) {
+            height = metadata.height;
+          }
+        } catch (err) {
+          logger.warn("Failed to extract image dimensions for uploaded image", { error: String(err) });
+        }
+
         const newImageId = `img-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
         const newImage = {
           id: newImageId,
@@ -1878,6 +1901,9 @@ ${allUrls
           uploadedBy: currentUser.id,
           status: "published",
           createdAt: new Date().toISOString(),
+          sha256: sha256 || undefined,
+          width: width || undefined,
+          height: height || undefined,
         };
 
         try {
@@ -1911,6 +1937,9 @@ ${allUrls
                   tags: newImage.tags || null,
                   status: newImage.status,
                   uploadedBy: currentUser.id,
+                  sha256: sha256 || null,
+                  width: width || null,
+                  height: height || null,
                 });
 
                 // Increment album photoCount in PostgreSQL and assign coverImage if album has none
