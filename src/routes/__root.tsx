@@ -16,6 +16,7 @@ import { Header } from "@/components/site/Header";
 import { Footer } from "@/components/site/Footer";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/hooks/useAuth";
+import { ThemeProvider } from "@/hooks/useTheme";
 import { initVisitorSession, trackPageView } from "@/lib/analytics";
 import { AdminShortcutListener } from "@/config/adminShortcut";
 
@@ -130,10 +131,23 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
   errorComponent: ErrorComponent,
 });
 
+const themeScript = `(function() {
+  try {
+    var saved = localStorage.getItem('theme');
+    var isDark = saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  } catch (e) {}
+})();`;
+
 function RootShell({ children }: { children: ReactNode }) {
   return (
-    <html lang="km">
+    <html lang="km" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <HeadContent />
       </head>
       <body>
@@ -149,19 +163,21 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <PageTracker />
-        <AdminShortcutListener />
-        <div className="flex min-h-screen flex-col">
-          <Header />
-          <main className="flex-1">
-            {/* Required: nested routes render here. */}
-            <Outlet />
-          </main>
-          <Footer />
-        </div>
-        <Toaster />
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <PageTracker />
+          <AdminShortcutListener />
+          <div className="flex min-h-screen flex-col">
+            <Header />
+            <main className="flex-1">
+              {/* Required: nested routes render here. */}
+              <Outlet />
+            </main>
+            <Footer />
+          </div>
+          <Toaster />
+        </AuthProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

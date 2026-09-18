@@ -15,6 +15,7 @@ const UploadModal = lazy(() =>
   import("@/components/site/UploadModal").then((m) => ({ default: m.UploadModal }))
 );
 import { useAuth } from "@/hooks/useAuth";
+import { ThemeToggle } from "./ThemeToggle";
 
 const nav = [
   { to: "/", label: "🏠 ទំព័រដើម" },
@@ -135,6 +136,8 @@ export function Header() {
             </DropdownMenu>
           ) : null}
 
+          <ThemeToggle />
+
           <Sheet>
             <SheetTrigger asChild>
               <Button variant="outline" size="icon" className="rounded-full xl:hidden">
@@ -173,6 +176,11 @@ export function Header() {
                     🛡️ ផ្ទាំងគ្រប់គ្រង Admin
                   </Link>
                 )}
+
+                <div className="mt-4 flex items-center justify-between rounded-2xl border border-border bg-card p-3">
+                  <span className="text-sm font-medium">ពន្លឺ / ពណ៌ (Theme)</span>
+                  <ThemeToggle />
+                </div>
               </nav>
             </SheetContent>
           </Sheet>
