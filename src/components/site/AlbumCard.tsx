@@ -1,6 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import type { AlbumDetailSearch } from "@/routes/album.$albumId";
-import { ArrowRight, Images, Film } from "lucide-react";
+import { ArrowRight, Images, Film, Folder } from "lucide-react";
 import type { Album } from "@/data/archive";
 import { toKhmerNumber } from "@/data/archive";
 import { LikeButton } from "./LikeButton";
@@ -75,12 +75,23 @@ export function AlbumCard({
             >
               {album.festival.emoji}
             </span>
-            <span className="truncate">{album.festival.name}</span>
+            <span className="truncate">{album.title || album.festival.name}</span>
           </h3>
         </div>
       </div>
 
       <div className="space-y-3 p-4">
+        {/* Parent Path hierarchy context for nested/sub-albums */}
+        {album.parentPath && album.parentPath.length > 0 && (
+          <div className="flex items-center gap-1.5 rounded-lg border border-gold/30 bg-gold/10 px-2.5 py-1 text-[11px] text-foreground">
+            <Folder className="h-3 w-3 shrink-0 text-gold" />
+            <span className="shrink-0 font-medium text-muted-foreground">នៅក្នុង៖</span>
+            <span className="truncate font-semibold text-gold">
+              {album.parentPath.map((p) => p.title).join(" > ")}
+            </span>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center justify-between gap-1.5">
           <div className="flex flex-wrap gap-1.5">
             {[album.festival.month, `ឆ្នាំ ${toKhmerNumber(album.year)}`].map((chip) => (

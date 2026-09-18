@@ -1,11 +1,11 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { zodValidator, fallback } from "@tanstack/zod-adapter";
 import { z } from "zod";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Search as SearchIcon, TrendingUp, Sparkles, AlertCircle, Film, Images } from "lucide-react";
 import { AlbumGrid } from "@/components/site/YearSection";
 import { toKhmerNumber, type Album } from "@/data/archive";
-import { useSearchArchive, useSearchVideos } from "@/hooks/useArchiveData";
+import { useSearchArchive, useSearchVideos, useAlbums } from "@/hooks/useArchiveData";
 import { useTrendingSearches } from "@/hooks/useSearchAnalytics";
 import { trackSearch, trackSearchClick } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
@@ -38,7 +38,43 @@ function SearchPage() {
   const { data: results = [], isLoading } = useSearchArchive(q);
   const { data: videoResults = [] } = useSearchVideos(q);
   const { data: trendingSuggestions = [] } = useTrendingSearches(8);
+  const { data: allAlbums = [] } = useAlbums();
   const trackedRef = useRef<string>("");
+
+  // Memoized map for O(1) parent lookup
+  const albumMap = useMemo(() => new Map(allAlbums.map((a) => [a.id, a])), [allAlbums]);
+
+  // Enrich search results with derived parentPath for nested/sub-albums
+  const enrichedResults = useMemo(() => {
+    if (results.length === 0) return [];
+
+    return results.map((album) => {
+      if (!album.parentAlbumId) {
+        return album;
+      }
+
+      const chain: Array<{ id: string; title: string }> = [];
+      let currParentId: string | null | undefined = album.parentAlbumId;
+      const visited = new Set<string>([album.id]);
+
+      while (currParentId && !visited.has(currParentId)) {
+        visited.add(currParentId);
+        const parent = albumMap.get(currParentId);
+        if (!parent) break;
+
+        chain.unshift({
+          id: parent.id,
+          title: parent.title || parent.festival?.name || parent.id,
+        });
+        currParentId = parent.parentAlbumId;
+      }
+
+      return {
+        ...album,
+        parentPath: chain.length > 0 ? chain : undefined,
+      };
+    });
+  }, [results, albumMap]);
 
   // Sync input value and active tab when route query changes
   useEffect(() => {
@@ -182,7 +218,7 @@ function SearchPage() {
             <>
               {results.length > 0 ? (
                 <div className="mt-6">
-                  <AlbumGrid items={results} onSelectAlbum={handleSelectAlbum} />
+                  <AlbumGrid items={enrichedResults} onSelectAlbum={handleSelectAlbum} />
                 </div>
               ) : videoResults.length === 0 ? null : (
                 <div className="mt-10 rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
