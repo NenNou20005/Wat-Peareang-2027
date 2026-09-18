@@ -1967,6 +1967,7 @@ class Database {
           createdAlbums: result.createdAlbums,
         };
       } catch (err: unknown) {
+        console.error("[PostgreSQL copyAlbums Error]:", err);
         const msg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការចម្លង Album ក្នុង PostgreSQL។";
         return { success: false, copiedCount: 0, error: msg };
       }

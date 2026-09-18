@@ -1449,6 +1449,13 @@ ${allUrls
         );
 
         if (!result.success) {
+          logger.error("POST /api/admin/albums/paste failed", {
+            error: result.error,
+            targetIds,
+            targetParentAlbumId: cleanTargetParentId,
+            destinationFestivalId: cleanDestinationFestivalId,
+            destinationYear: cleanDestinationYear,
+          });
           const rawError = result.error || "";
           const isSafeValidation =
             typeof rawError === "string" &&
