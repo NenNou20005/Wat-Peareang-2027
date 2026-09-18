@@ -107,6 +107,7 @@ export const REQUIRED_TABLES = [
   "sessions",
   "festivals",
   "years",
+  "events",
   "albums",
   "images",
   "likes",
@@ -118,6 +119,7 @@ export const REQUIRED_TABLES = [
   "reports",
   "notifications",
   "activity_logs",
+  "site_settings",
 ] as const;
 
 export interface TableVerificationResult {
@@ -253,6 +255,24 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
         "ip" text,
         "expires_at" timestamp with time zone NOT NULL,
         "created_at" timestamp with time zone DEFAULT now() NOT NULL
+      );`,
+
+      // events
+      `CREATE TABLE IF NOT EXISTS "events" (
+        "id" text PRIMARY KEY NOT NULL,
+        "festival_id" text NOT NULL,
+        "year" integer NOT NULL,
+        "name_kh" text NOT NULL,
+        "name_en" text,
+        "description" text,
+        "event_date" text,
+        "location" text DEFAULT 'វត្តពារាំង' NOT NULL,
+        "icon" text DEFAULT '🎉' NOT NULL,
+        "cover_image" text,
+        "status" text DEFAULT 'published' NOT NULL,
+        "sort_order" integer DEFAULT 0 NOT NULL,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL
       );`,
 
       // albums
@@ -443,6 +463,14 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
         "timestamp" timestamp with time zone DEFAULT now() NOT NULL
       );`,
 
+      // site_settings
+      `CREATE TABLE IF NOT EXISTS "site_settings" (
+        "key" text PRIMARY KEY NOT NULL,
+        "value" text NOT NULL,
+        "description" text,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+      );`,
+
       // private_albums
       `CREATE TABLE IF NOT EXISTS "private_albums" (
         "id" text PRIMARY KEY NOT NULL,
@@ -558,6 +586,18 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
 
       // Foreign Keys (applied safely)
       `DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'events_festival_id_festivals_id_fk') THEN
+          ALTER TABLE "events" ADD CONSTRAINT "events_festival_id_festivals_id_fk" FOREIGN KEY ("festival_id") REFERENCES "festivals"("id") ON DELETE cascade;
+        END IF;
+      END $$;`,
+
+      `DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'events_year_years_year_fk') THEN
+          ALTER TABLE "events" ADD CONSTRAINT "events_year_years_year_fk" FOREIGN KEY ("year") REFERENCES "years"("year") ON DELETE cascade;
+        END IF;
+      END $$;`,
+
+      `DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'albums_festival_id_festivals_id_fk') THEN
           ALTER TABLE "albums" ADD CONSTRAINT "albums_festival_id_festivals_id_fk" FOREIGN KEY ("festival_id") REFERENCES "festivals"("id") ON DELETE cascade;
         END IF;
@@ -639,6 +679,11 @@ export async function initializeDatabaseSchema(): Promise<boolean> {
 
       // Indexes
       `CREATE INDEX IF NOT EXISTS "idx_festivals_status" ON "festivals" ("status");`,
+      `CREATE INDEX IF NOT EXISTS "idx_events_festival_id" ON "events" ("festival_id");`,
+      `CREATE INDEX IF NOT EXISTS "idx_events_year" ON "events" ("year");`,
+      `CREATE INDEX IF NOT EXISTS "idx_events_festival_year" ON "events" ("festival_id", "year");`,
+      `CREATE INDEX IF NOT EXISTS "idx_events_status" ON "events" ("status");`,
+      `CREATE INDEX IF NOT EXISTS "idx_events_sort_order" ON "events" ("sort_order");`,
       `CREATE INDEX IF NOT EXISTS "idx_albums_festival_id" ON "albums" ("festival_id");`,
       `CREATE INDEX IF NOT EXISTS "idx_albums_year" ON "albums" ("year");`,
       `CREATE INDEX IF NOT EXISTS "idx_albums_event_id" ON "albums" ("event_id");`,
