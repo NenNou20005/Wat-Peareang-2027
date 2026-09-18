@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { Link } from "@tanstack/react-router";
 import type { AlbumDetailSearch } from "@/routes/album.$albumId";
 import { ArrowRight, Images, Film, Folder } from "lucide-react";
@@ -5,7 +6,7 @@ import type { Album } from "@/data/archive";
 import { toKhmerNumber } from "@/data/archive";
 import { LikeButton } from "./LikeButton";
 import { FavoriteButton } from "./FavoriteButton";
-import { resolveImageUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
+import { resolveImageUrl, resolveCoverThumbnailUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
 
 export function AlbumCard({
   album,
@@ -18,34 +19,50 @@ export function AlbumCard({
   onSelect?: (album: Album) => void;
   albumLinkSearch?: AlbumDetailSearch | undefined;
 }) {
+  const originalCoverUrl = resolveImageUrl(album.coverImage || album.festival.cover, album.festivalId);
+  const thumbCoverUrl = resolveCoverThumbnailUrl(album.coverImage || album.festival.cover, album.festivalId);
+  const hasDerivedThumb = Boolean(thumbCoverUrl && originalCoverUrl && thumbCoverUrl !== originalCoverUrl);
+
+  type FallbackStage = "thumb" | "original" | "broken";
+  const [fallbackStage, setFallbackStage] = useState<FallbackStage>("thumb");
+
+  useEffect(() => {
+    setFallbackStage("thumb");
+  }, [thumbCoverUrl]);
+
+  const currentCover =
+    fallbackStage === "thumb"
+      ? (hasDerivedThumb ? thumbCoverUrl : originalCoverUrl)
+      : fallbackStage === "original"
+        ? originalCoverUrl
+        : BROKEN_IMAGE_FALLBACK;
+
+  const handleImageError = () => {
+    if (fallbackStage === "thumb" && hasDerivedThumb) {
+      setFallbackStage("original");
+    } else if (fallbackStage !== "broken") {
+      setFallbackStage("broken");
+    }
+  };
+
   return (
     <article className="group overflow-hidden rounded-3xl bg-card shadow-card transition-all duration-300 hover:-translate-y-1 hover:shadow-card-hover">
       <div className="relative aspect-[4/3] overflow-hidden bg-secondary/80">
         {/* Ambient Blurred Backdrop for Portrait/Wide covers */}
         <img
-          src={resolveImageUrl(album.coverImage || album.festival.cover, album.festivalId)}
+          src={currentCover}
           alt=""
           aria-hidden="true"
           className="absolute inset-0 h-full w-full object-cover blur-md scale-110 opacity-35 dark:opacity-25 pointer-events-none"
-          onError={(e) => {
-            const target = e.currentTarget;
-            if (target.src !== BROKEN_IMAGE_FALLBACK) {
-              target.src = BROKEN_IMAGE_FALLBACK;
-            }
-          }}
+          onError={handleImageError}
         />
         {/* Uncropped Natural Cover */}
         <img
-          src={resolveImageUrl(album.coverImage || album.festival.cover, album.festivalId)}
+          src={currentCover}
           alt={`${album.title || album.festival.name} ឆ្នាំ ${album.year}`}
           loading="lazy"
           className="relative z-[1] h-full w-full object-contain transition-transform duration-500 group-hover:scale-105"
-          onError={(e) => {
-            const target = e.currentTarget;
-            if (target.src !== BROKEN_IMAGE_FALLBACK) {
-              target.src = BROKEN_IMAGE_FALLBACK;
-            }
-          }}
+          onError={handleImageError}
         />
         <div className="absolute inset-0 z-[2] card-scrim" />
 

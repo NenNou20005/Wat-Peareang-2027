@@ -15,7 +15,7 @@ import { Upload, X, Rocket, ImagePlus, Loader2, FolderOpen, Check } from "lucide
 import { toast } from "sonner";
 import { useUploadImage } from "@/hooks/useAdminData";
 import { useAlbums, useFestivals, useYears } from "@/hooks/useArchiveData";
-import { resolveImageUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
+import { resolveImageUrl, resolveCoverThumbnailUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
 import { Link } from "@tanstack/react-router";
 
 const MAX = 50;
@@ -308,11 +308,25 @@ export function UploadModal({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-56 overflow-y-auto pr-1">
                 {availableAlbums.map((alb) => {
                   const isSelected = alb.id === selectedAlbumId;
-                  const coverSrc = alb.coverImage
-                    ? resolveImageUrl(alb.coverImage, alb.festivalId)
-                    : alb.festival?.cover
-                      ? resolveImageUrl(alb.festival.cover, alb.festivalId)
-                      : undefined;
+                  const rawCover = alb.coverImage || alb.festival?.cover;
+                  const originalCoverSrc = rawCover ? resolveImageUrl(rawCover, alb.festivalId) : undefined;
+                  const thumbCoverSrc = rawCover ? resolveCoverThumbnailUrl(rawCover, alb.festivalId) : undefined;
+                  const handleCoverError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+                    const target = e.currentTarget;
+                    const stage = target.getAttribute("data-fallback");
+                    if (!stage) {
+                      if (thumbCoverSrc && originalCoverSrc && thumbCoverSrc !== originalCoverSrc) {
+                        target.setAttribute("data-fallback", "original");
+                        target.src = originalCoverSrc;
+                      } else {
+                        target.setAttribute("data-fallback", "broken");
+                        target.src = BROKEN_IMAGE_FALLBACK;
+                      }
+                    } else if (stage === "original") {
+                      target.setAttribute("data-fallback", "broken");
+                      target.src = BROKEN_IMAGE_FALLBACK;
+                    }
+                  };
 
                   return (
                     <button
@@ -328,17 +342,12 @@ export function UploadModal({
                     >
                       {/* Album Cover Thumbnail */}
                       <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-muted border border-border/50">
-                        {coverSrc ? (
+                        {thumbCoverSrc ? (
                           <img
-                            src={coverSrc}
+                            src={thumbCoverSrc}
                             alt={alb.title}
                             className="h-full w-full object-cover"
-                            onError={(e) => {
-                              const target = e.currentTarget;
-                              if (target.src !== BROKEN_IMAGE_FALLBACK) {
-                                target.src = BROKEN_IMAGE_FALLBACK;
-                              }
-                            }}
+                            onError={handleCoverError}
                           />
                         ) : (
                           <div className="grid h-full w-full place-items-center bg-secondary text-xs text-muted-foreground">

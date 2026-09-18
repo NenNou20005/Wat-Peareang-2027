@@ -16,6 +16,7 @@ const AddFestivalModal = lazy(() =>
   import("@/components/site/AddFestivalModal").then((m) => ({ default: m.AddFestivalModal }))
 );
 import { useYears, useFestivals, useAlbums } from "@/hooks/useArchiveData";
+import { resolveImageUrl, resolveCoverThumbnailUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
 import { useCreateAlbum } from "@/hooks/useAdminData";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -296,36 +297,60 @@ export function FestivalPills({
                   </div>
                 ) : (
                   displayedAlbums.map((alb) => (
-                    <Link
-                      key={alb.id}
-                      to="/album/$albumId"
-                      params={{ albumId: alb.id }}
-                      {...(albumLinkSearch ? { search: albumLinkSearch } : {})}
-                      search={albumLinkSearch ?? {}}
-                      className="group relative flex flex-col w-28 sm:w-32 shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:border-gold/60 hover:shadow-card cursor-pointer"
-                    >
-                      {/* Album Thumbnail */}
-                      <div className="relative aspect-[4/3] w-full overflow-hidden bg-secondary">
-                        <img
-                          src={alb.coverImage || alb.festival?.cover || activeFestival.cover}
-                          alt={alb.title}
-                          loading="lazy"
-                          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-60 group-hover:opacity-25 transition-opacity" />
-                        <span className="absolute bottom-1 right-1 rounded-full bg-black/65 px-1.5 py-0.5 text-[9px] font-medium text-white backdrop-blur-xs flex items-center gap-0.5">
-                          <Camera className="h-2 w-2" />
-                          {toKhmerNumber(alb.photoCount || 0)}
-                        </span>
-                      </div>
+                    (() => {
+                      const rawCover = alb.coverImage || alb.festival?.cover || activeFestival.cover;
+                      const originalCoverSrc = resolveImageUrl(rawCover, alb.festivalId || activeFestival.id);
+                      const thumbCoverSrc = resolveCoverThumbnailUrl(rawCover, alb.festivalId || activeFestival.id);
+                      const handleCoverError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+                        const target = e.currentTarget;
+                        const stage = target.getAttribute("data-fallback");
+                        if (!stage) {
+                          if (thumbCoverSrc && originalCoverSrc && thumbCoverSrc !== originalCoverSrc) {
+                            target.setAttribute("data-fallback", "original");
+                            target.src = originalCoverSrc;
+                          } else {
+                            target.setAttribute("data-fallback", "broken");
+                            target.src = BROKEN_IMAGE_FALLBACK;
+                          }
+                        } else if (stage === "original") {
+                          target.setAttribute("data-fallback", "broken");
+                          target.src = BROKEN_IMAGE_FALLBACK;
+                        }
+                      };
+                      return (
+                        <Link
+                          key={alb.id}
+                          to="/album/$albumId"
+                          params={{ albumId: alb.id }}
+                          {...(albumLinkSearch ? { search: albumLinkSearch } : {})}
+                          search={albumLinkSearch ?? {}}
+                          className="group relative flex flex-col w-28 sm:w-32 shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:border-gold/60 hover:shadow-card cursor-pointer"
+                        >
+                          {/* Album Thumbnail */}
+                          <div className="relative aspect-[4/3] w-full overflow-hidden bg-secondary">
+                            <img
+                              src={thumbCoverSrc}
+                              alt={alb.title}
+                              loading="lazy"
+                              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                              onError={handleCoverError}
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-60 group-hover:opacity-25 transition-opacity" />
+                            <span className="absolute bottom-1 right-1 rounded-full bg-black/65 px-1.5 py-0.5 text-[9px] font-medium text-white backdrop-blur-xs flex items-center gap-0.5">
+                              <Camera className="h-2 w-2" />
+                              {toKhmerNumber(alb.photoCount || 0)}
+                            </span>
+                          </div>
 
-                      {/* Album Title */}
-                      <div className="p-1.5 pt-1.5 pb-2">
-                        <h4 className="text-[11px] sm:text-xs font-semibold text-foreground truncate group-hover:text-gold transition-colors leading-tight">
-                          {alb.title}
-                        </h4>
-                      </div>
-                    </Link>
+                          {/* Album Title */}
+                          <div className="p-1.5 pt-1.5 pb-2">
+                            <h4 className="text-[11px] sm:text-xs font-semibold text-foreground truncate group-hover:text-gold transition-colors leading-tight">
+                              {alb.title}
+                            </h4>
+                          </div>
+                        </Link>
+                      );
+                    })()
                   ))
                 )}
 

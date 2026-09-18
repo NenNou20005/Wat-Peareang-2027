@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { toKhmerNumber, type Festival } from "@/data/archive";
 import { cn } from "@/lib/utils";
-import { resolveImageUrl } from "@/lib/asset-resolver";
+import { resolveImageUrl, resolveCoverThumbnailUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFestivals, useYears, useAlbums } from "@/hooks/useArchiveData";
 import { useCreateAlbum } from "@/hooks/useAdminData";
@@ -606,35 +606,56 @@ function FestivalsPage() {
 
                     {/* Albums Horizontal Scroll Row */}
                     <div className="no-scrollbar flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 px-0.5">
-                      {event.albums.map((alb) => (
-                        <Link
-                          key={alb.id}
-                          to="/album/$albumId"
-                          params={{ albumId: alb.id }}
-                          className="group relative flex flex-col w-28 sm:w-32 shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:border-gold/60 hover:shadow-card cursor-pointer"
-                        >
-                          {/* Cover Thumbnail */}
-                          <div className="relative aspect-[4/3] w-full overflow-hidden bg-secondary/80">
-                            {/* Ambient Backdrop */}
-                            <img
-                              src={resolveImageUrl(alb.coverImage || activeFestival.cover, activeFestival.id)}
-                              alt=""
-                              aria-hidden="true"
-                              className="absolute inset-0 h-full w-full object-cover blur-md scale-110 opacity-35 dark:opacity-25 pointer-events-none"
-                            />
-                            {/* Uncropped Cover */}
-                            <img
-                              src={resolveImageUrl(alb.coverImage || activeFestival.cover, activeFestival.id)}
-                              alt={alb.title}
-                              loading="lazy"
-                              className="relative z-[1] h-full w-full object-contain transition-transform duration-300 group-hover:scale-105"
-                            />
-                            <div className="absolute inset-0 z-[2] bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-60 group-hover:opacity-25 transition-opacity" />
-                            <span className="absolute bottom-1 right-1 z-[3] rounded-full bg-black/65 px-1.5 py-0.5 text-[9px] font-medium text-white backdrop-blur-xs flex items-center gap-0.5">
-                              <Camera className="h-2 w-2" />
-                              {toKhmerNumber(alb.photoCount || 0)}
-                            </span>
-                          </div>
+                      {event.albums.map((alb) => {
+                        const originalCoverSrc = resolveImageUrl(alb.coverImage || activeFestival.cover, activeFestival.id);
+                        const thumbCoverSrc = resolveCoverThumbnailUrl(alb.coverImage || activeFestival.cover, activeFestival.id);
+                        const handleCoverError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+                          const target = e.currentTarget;
+                          const stage = target.getAttribute("data-fallback");
+                          if (!stage) {
+                            if (thumbCoverSrc && originalCoverSrc && thumbCoverSrc !== originalCoverSrc) {
+                              target.setAttribute("data-fallback", "original");
+                              target.src = originalCoverSrc;
+                            } else {
+                              target.setAttribute("data-fallback", "broken");
+                              target.src = BROKEN_IMAGE_FALLBACK;
+                            }
+                          } else if (stage === "original") {
+                            target.setAttribute("data-fallback", "broken");
+                            target.src = BROKEN_IMAGE_FALLBACK;
+                          }
+                        };
+                        return (
+                          <Link
+                            key={alb.id}
+                            to="/album/$albumId"
+                            params={{ albumId: alb.id }}
+                            className="group relative flex flex-col w-28 sm:w-32 shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:border-gold/60 hover:shadow-card cursor-pointer"
+                          >
+                            {/* Cover Thumbnail */}
+                            <div className="relative aspect-[4/3] w-full overflow-hidden bg-secondary/80">
+                              {/* Ambient Backdrop */}
+                              <img
+                                src={thumbCoverSrc}
+                                alt=""
+                                aria-hidden="true"
+                                className="absolute inset-0 h-full w-full object-cover blur-md scale-110 opacity-35 dark:opacity-25 pointer-events-none"
+                                onError={handleCoverError}
+                              />
+                              {/* Uncropped Cover */}
+                              <img
+                                src={thumbCoverSrc}
+                                alt={alb.title}
+                                loading="lazy"
+                                className="relative z-[1] h-full w-full object-contain transition-transform duration-300 group-hover:scale-105"
+                                onError={handleCoverError}
+                              />
+                              <div className="absolute inset-0 z-[2] bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-60 group-hover:opacity-25 transition-opacity" />
+                              <span className="absolute bottom-1 right-1 z-[3] rounded-full bg-black/65 px-1.5 py-0.5 text-[9px] font-medium text-white backdrop-blur-xs flex items-center gap-0.5">
+                                <Camera className="h-2 w-2" />
+                                {toKhmerNumber(alb.photoCount || 0)}
+                              </span>
+                            </div>
 
                           {/* Title */}
                           <div className="p-1.5 pt-1.5 pb-2">
@@ -642,8 +663,9 @@ function FestivalsPage() {
                               {alb.title}
                             </h4>
                           </div>
-                        </Link>
-                      ))}
+                          </Link>
+                        );
+                      })}
 
                       {/* [+ បន្ថែម Album] Action Card on first event */}
                       {canManageAlbums && eventIdx === 0 && (

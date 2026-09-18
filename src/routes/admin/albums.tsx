@@ -49,7 +49,7 @@ import {
   type AdminAlbum,
 } from "@/hooks/useAdminData";
 import { useAlbumPhotos } from "@/hooks/useArchiveData";
-import { resolveImageUrl } from "@/lib/asset-resolver";
+import { resolveImageUrl, resolveCoverThumbnailUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
 import { cn } from "@/lib/utils";
 
 /**
@@ -104,21 +104,45 @@ function AlbumCoverPicker({
       <div className="flex items-center gap-3.5 rounded-xl bg-muted/30 p-2.5 border border-border/50">
         <div className="relative aspect-video w-32 shrink-0 overflow-hidden rounded-lg border border-border bg-secondary/80 flex items-center justify-center shadow-xs">
           {selectedCover ? (
-            <>
-              {/* Ambient Blurred Backdrop */}
-              <img
-                src={resolveImageUrl(selectedCover)}
-                alt=""
-                aria-hidden="true"
-                className="absolute inset-0 h-full w-full object-cover blur-sm scale-110 opacity-30 pointer-events-none"
-              />
-              {/* Natural Aspect Ratio Uncropped Cover */}
-              <img
-                src={resolveImageUrl(selectedCover)}
-                alt="Album Cover Preview"
-                className="relative z-[1] max-h-full max-w-full object-contain"
-              />
-            </>
+            (() => {
+              const originalPreview = resolveImageUrl(selectedCover);
+              const thumbPreview = resolveCoverThumbnailUrl(selectedCover);
+              const handlePreviewError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+                const target = e.currentTarget;
+                const stage = target.getAttribute("data-fallback");
+                if (!stage) {
+                  if (thumbPreview && originalPreview && thumbPreview !== originalPreview) {
+                    target.setAttribute("data-fallback", "original");
+                    target.src = originalPreview;
+                  } else {
+                    target.setAttribute("data-fallback", "broken");
+                    target.src = BROKEN_IMAGE_FALLBACK;
+                  }
+                } else if (stage === "original") {
+                  target.setAttribute("data-fallback", "broken");
+                  target.src = BROKEN_IMAGE_FALLBACK;
+                }
+              };
+              return (
+                <>
+                  {/* Ambient Blurred Backdrop */}
+                  <img
+                    src={thumbPreview}
+                    alt=""
+                    aria-hidden="true"
+                    className="absolute inset-0 h-full w-full object-cover blur-sm scale-110 opacity-30 pointer-events-none"
+                    onError={handlePreviewError}
+                  />
+                  {/* Natural Aspect Ratio Uncropped Cover */}
+                  <img
+                    src={thumbPreview}
+                    alt="Album Cover Preview"
+                    className="relative z-[1] max-h-full max-w-full object-contain"
+                    onError={handlePreviewError}
+                  />
+                </>
+              );
+            })()
           ) : (
             <div className="grid h-full w-full place-items-center text-muted-foreground text-center p-1 bg-secondary/40">
               <ImageIcon className="h-6 w-6 opacity-40" />
@@ -1126,7 +1150,25 @@ function AdminAlbumsPage() {
           ) : (
             localAlbums.map((album, index) => {
               const fest = festivals.find((f) => f.id === album.festivalId);
-              const coverSrc = album.coverImage || fest?.coverUrl || `/assets/fest-${album.festivalId}.jpg`;
+              const rawCover = album.coverImage || fest?.coverUrl || `/assets/fest-${album.festivalId}.jpg`;
+              const originalCoverSrc = resolveImageUrl(rawCover, album.festivalId);
+              const thumbCoverSrc = resolveCoverThumbnailUrl(rawCover, album.festivalId);
+              const handleCardImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+                const target = e.currentTarget;
+                const stage = target.getAttribute("data-fallback");
+                if (!stage) {
+                  if (thumbCoverSrc && originalCoverSrc && thumbCoverSrc !== originalCoverSrc) {
+                    target.setAttribute("data-fallback", "original");
+                    target.src = originalCoverSrc;
+                  } else {
+                    target.setAttribute("data-fallback", "broken");
+                    target.src = BROKEN_IMAGE_FALLBACK;
+                  }
+                } else if (stage === "original") {
+                  target.setAttribute("data-fallback", "broken");
+                  target.src = BROKEN_IMAGE_FALLBACK;
+                }
+              };
               const isSelected = isReorderActive && selectedIds.has(album.id);
               return (
                 <div
@@ -1141,17 +1183,19 @@ function AdminAlbumsPage() {
                     <div className="relative aspect-[16/9] w-full overflow-hidden rounded-2xl bg-secondary/80 flex items-center justify-center">
                       {/* Ambient Blurred Backdrop */}
                       <img
-                        src={coverSrc}
+                        src={thumbCoverSrc}
                         alt=""
                         aria-hidden="true"
                         className="absolute inset-0 h-full w-full object-cover blur-md scale-110 opacity-35 dark:opacity-25 pointer-events-none"
+                        onError={handleCardImageError}
                       />
                       {/* Natural Aspect Ratio Uncropped Cover */}
                       <img
-                        src={coverSrc}
+                        src={thumbCoverSrc}
                         alt={album.title}
                         loading="lazy"
                         className="relative z-[1] max-h-full max-w-full object-contain transition-transform duration-300 hover:scale-105"
+                        onError={handleCardImageError}
                       />
                       <div className="absolute inset-0 z-[2] bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-60 pointer-events-none" />
 

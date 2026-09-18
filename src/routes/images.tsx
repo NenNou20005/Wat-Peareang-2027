@@ -24,7 +24,7 @@ import {
   useAlbumPhotos,
 } from "@/hooks/useArchiveData";
 import { toKhmerNumber } from "@/data/archive";
-import { resolveImageUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
+import { resolveImageUrl, resolveCoverThumbnailUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
 
 type ImageGallerySearch = {
   festivalId?: string | undefined;
@@ -350,41 +350,50 @@ function PublicImageGalleryPage() {
               </div>
             ) : (
               <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {albums.map((album) => (
-                  <article
-                    key={album.id}
-                    onClick={() => handleSelectAlbum(album.id)}
-                    className="group cursor-pointer overflow-hidden rounded-3xl border border-border/80 bg-card shadow-soft transition-all duration-300 hover:-translate-y-1 hover:shadow-card flex flex-col justify-between"
-                  >
-                    {/* Album Cover */}
-                    <div className="relative aspect-[4/3] w-full overflow-hidden bg-secondary/80">
-                      {/* Ambient blurred backdrop for portrait/irregular covers */}
-                      <img
-                        src={resolveImageUrl(album.coverImage || album.festival?.cover, album.festivalId)}
-                        alt=""
-                        aria-hidden="true"
-                        className="absolute inset-0 h-full w-full object-cover blur-md scale-110 opacity-35 dark:opacity-25 pointer-events-none"
-                        onError={(e) => {
-                          const target = e.currentTarget;
-                          if (target.src !== BROKEN_IMAGE_FALLBACK) {
-                            target.src = BROKEN_IMAGE_FALLBACK;
-                          }
-                        }}
-                      />
-                      {/* Uncropped Full Cover */}
-                      <img
-                        src={resolveImageUrl(album.coverImage || album.festival?.cover, album.festivalId)}
-                        alt={album.title}
-                        loading="lazy"
-                        className="relative z-[1] h-full w-full object-contain transition-transform duration-500 group-hover:scale-105"
-                        onError={(e) => {
-                          const target = e.currentTarget;
-                          if (target.src !== BROKEN_IMAGE_FALLBACK) {
-                            target.src = BROKEN_IMAGE_FALLBACK;
-                          }
-                        }}
-                      />
-                      <div className="absolute inset-0 z-[2] bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+                {albums.map((album) => {
+                  const originalCoverSrc = resolveImageUrl(album.coverImage || album.festival?.cover, album.festivalId);
+                  const thumbCoverSrc = resolveCoverThumbnailUrl(album.coverImage || album.festival?.cover, album.festivalId);
+                  const handleAlbumCoverError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+                    const target = e.currentTarget;
+                    const stage = target.getAttribute("data-fallback");
+                    if (!stage) {
+                      if (thumbCoverSrc && originalCoverSrc && thumbCoverSrc !== originalCoverSrc) {
+                        target.setAttribute("data-fallback", "original");
+                        target.src = originalCoverSrc;
+                      } else {
+                        target.setAttribute("data-fallback", "broken");
+                        target.src = BROKEN_IMAGE_FALLBACK;
+                      }
+                    } else if (stage === "original") {
+                      target.setAttribute("data-fallback", "broken");
+                      target.src = BROKEN_IMAGE_FALLBACK;
+                    }
+                  };
+                  return (
+                    <article
+                      key={album.id}
+                      onClick={() => handleSelectAlbum(album.id)}
+                      className="group cursor-pointer overflow-hidden rounded-3xl border border-border/80 bg-card shadow-soft transition-all duration-300 hover:-translate-y-1 hover:shadow-card flex flex-col justify-between"
+                    >
+                      {/* Album Cover */}
+                      <div className="relative aspect-[4/3] w-full overflow-hidden bg-secondary/80">
+                        {/* Ambient blurred backdrop for portrait/irregular covers */}
+                        <img
+                          src={thumbCoverSrc}
+                          alt=""
+                          aria-hidden="true"
+                          className="absolute inset-0 h-full w-full object-cover blur-md scale-110 opacity-35 dark:opacity-25 pointer-events-none"
+                          onError={handleAlbumCoverError}
+                        />
+                        {/* Uncropped Full Cover */}
+                        <img
+                          src={thumbCoverSrc}
+                          alt={album.title}
+                          loading="lazy"
+                          className="relative z-[1] h-full w-full object-contain transition-transform duration-500 group-hover:scale-105"
+                          onError={handleAlbumCoverError}
+                        />
+                        <div className="absolute inset-0 z-[2] bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
 
                       {/* Year badge */}
                       <span className="absolute right-3 top-3 z-[3] rounded-full bg-background/85 px-2.5 py-1 text-xs font-semibold text-foreground backdrop-blur">
@@ -432,8 +441,9 @@ function PublicImageGalleryPage() {
                       </div>
                     </div>
                   </article>
-                ))}
-              </div>
+                );
+              })}
+            </div>
             )}
           </>
         ) : (

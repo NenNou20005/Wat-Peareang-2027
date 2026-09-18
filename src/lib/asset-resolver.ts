@@ -103,3 +103,56 @@ export const BROKEN_IMAGE_FALLBACK =
     (Image Unavailable)
   </text>
 </svg>`);
+
+/**
+ * Resolves an album cover URL to its corresponding WebP thumbnail URL if available in R2 storage.
+ * If the URL is not an R2 album original or cannot be safely mapped, returns the original resolved URL.
+ */
+export function resolveCoverThumbnailUrl(url?: string | null, festivalId?: string): string {
+  const resolved = resolveImageUrl(url, festivalId);
+  if (!resolved || typeof resolved !== "string") {
+    return resolved || "";
+  }
+
+  // Static /assets/... and /src/assets/... template covers must remain unchanged
+  if (
+    resolved.startsWith("/assets/") ||
+    resolved.startsWith("/src/assets/") ||
+    resolved.includes("assets/fest-")
+  ) {
+    return resolved;
+  }
+
+  // If already a thumbnail, do not transform
+  if (resolved.includes("/thumbs/")) {
+    return resolved;
+  }
+
+  // Check if this is an R2 album original path:
+  // e.g. /api/storage/r2/albums/{albumId}/originals/{fileId}.jpg
+  // or https://.../albums/{albumId}/originals/{fileId}.jpg
+  const albumOriginalRegex = /\/albums\/([^/]+)\/originals\/([^/?#]+)\.([a-zA-Z0-9]+)(?:[?#].*)?$/;
+  const match = resolved.match(albumOriginalRegex);
+  if (match && match[1] && match[2]) {
+    const albumId = match[1];
+    const fileId = match[2];
+    return resolved.replace(
+      albumOriginalRegex,
+      `/albums/${albumId}/thumbs/${fileId}-thumb.webp`,
+    );
+  }
+
+  // Also handle global uploads if applicable:
+  // e.g. /uploads/{fileId}.jpg -> /uploads/thumbs/{fileId}.webp
+  const uploadsOriginalRegex = /\/uploads\/([^/?#]+)\.([a-zA-Z0-9]+)(?:[?#].*)?$/;
+  const uploadMatch = resolved.match(uploadsOriginalRegex);
+  if (uploadMatch && uploadMatch[1] && !resolved.includes("/uploads/thumbs/")) {
+    const fileId = uploadMatch[1];
+    return resolved.replace(
+      uploadsOriginalRegex,
+      `/uploads/thumbs/${fileId}.webp`,
+    );
+  }
+
+  return resolved;
+}
