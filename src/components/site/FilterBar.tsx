@@ -143,14 +143,15 @@ export function FestivalPills({
     year: selectedYearNumber,
   });
 
-  // Strict isolation filter: guarantees only albums matching both festival AND year are shown
+  // Strict isolation filter: guarantees only root albums matching both festival AND year are shown
   const displayedAlbums = useMemo(() => {
     if (!activeFestival) return [];
     return festivalYearAlbums.filter((album) => {
       const matchFestival = album.festivalId === activeFestival.id;
       const matchYear =
         selectedYearNumber !== undefined ? album.year === selectedYearNumber : true;
-      return matchFestival && matchYear;
+      const matchRoot = !album.parentAlbumId;
+      return matchFestival && matchYear && matchRoot;
     });
   }, [festivalYearAlbums, activeFestival, selectedYearNumber]);
 

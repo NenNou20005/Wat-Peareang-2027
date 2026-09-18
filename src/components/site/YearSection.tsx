@@ -75,7 +75,10 @@ export function YearSection({
   const { data: defaultAlbums = [] } = useAlbums(undefined, { enabled: !albums });
   const sourceAlbums = albums ?? defaultAlbums;
   const items = sourceAlbums.filter(
-    (a) => a.year === year && (!festivalFilter?.length || festivalFilter.includes(a.festivalId)),
+    (a) =>
+      !a.parentAlbumId &&
+      a.year === year &&
+      (!festivalFilter?.length || festivalFilter.includes(a.festivalId)),
   );
 
   if (items.length === 0) return null;

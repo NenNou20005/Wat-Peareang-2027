@@ -6020,20 +6020,14 @@ export async function getPostgresEventsForFestivalYear(
       )
       .orderBy(asc(schema.events.sortOrder), asc(schema.events.createdAt));
 
-    // 2. Fetch all published albums for this festival and year
-    const albumRows = await db
-      .select()
-      .from(schema.albums)
-      .where(
-        and(
-          eq(schema.albums.festivalId, festivalId),
-          eq(schema.albums.year, year),
-          or(eq(schema.albums.status, "published"), eq(schema.albums.status, "approved")),
-        ),
-      )
-      .orderBy(asc(schema.albums.sortOrder), asc(schema.albums.createdAt));
+    // 2. Fetch all published albums for this festival and year using getPostgresAlbums
+    const allScopeAlbums = await getPostgresAlbums({ festivalId, year });
 
-    // 3. Fetch festival metadata for album mapping
+    // Filter ONLY Root Albums (parentAlbumId is null or empty)
+    // Sub-albums must NOT appear at the Event level!
+    const rootAlbums = allScopeAlbums.filter((a) => !a.parentAlbumId);
+
+    // 3. Fetch festival metadata for fallback container labeling
     const [fest] = await db
       .select()
       .from(schema.festivals)
@@ -6058,33 +6052,11 @@ export async function getPostgresEventsForFestivalYear(
           cover: "",
         };
 
-    const mapAlbum = (a: typeof albumRows[0]): DbAlbum => ({
-      id: a.id,
-      festivalId: a.festivalId,
-      year: a.year,
-      eventId: a.eventId,
-      title: a.title,
-      description: a.description || undefined,
-      location: a.location,
-      coverImage: a.coverImage || undefined,
-      photoCount: a.photoCount,
-      status: a.status as "published" | "draft" | "trashed",
-      viewsCount: a.viewsCount,
-      likesCount: a.likesCount,
-      createdAt: a.createdAt.toISOString(),
-      updatedAt: a.updatedAt.toISOString(),
-      festival: festivalMeta,
-      sortOrder: a.sortOrder,
-      parentAlbumId: a.parentAlbumId || null,
-    });
-
-    const mappedAlbums = albumRows.map(mapAlbum);
-
-    // Group albums by eventId
+    // Group root albums by eventId
     const albumsByEvent = new Map<string, DbAlbum[]>();
     const unassignedAlbums: DbAlbum[] = [];
 
-    for (const alb of mappedAlbums) {
+    for (const alb of rootAlbums) {
       if (alb.eventId) {
         const list = albumsByEvent.get(alb.eventId) || [];
         list.push(alb);
@@ -6171,6 +6143,7 @@ export async function getPostgresEventById(eventId: string): Promise<DbEventWith
         and(
           eq(schema.albums.eventId, eventId),
           or(eq(schema.albums.status, "published"), eq(schema.albums.status, "approved")),
+          isNull(schema.albums.parentAlbumId),
         ),
       )
       .orderBy(asc(schema.albums.sortOrder), asc(schema.albums.createdAt));

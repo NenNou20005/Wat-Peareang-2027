@@ -1,17 +1,18 @@
 import { createFileRoute, notFound, Link, useParams, useRouter, useNavigate, useCanGoBack } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
-import { useState, useEffect } from "react";
-import { Share2, Download, Images, ArrowLeft, Film } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { Share2, Download, Images, ArrowLeft, Film, Folder } from "lucide-react";
 import { Lightbox } from "@/components/site/Lightbox";
 import { toKhmerNumber, type Album } from "@/data/archive";
 import { cn, downloadArchiveImage } from "@/lib/utils";
 import { toast } from "sonner";
-import { useAlbum, useAlbumPhotos, useAlbumVideos } from "@/hooks/useArchiveData";
+import { useAlbum, useAlbums, useAlbumPhotos, useAlbumVideos } from "@/hooks/useArchiveData";
 import { trackAlbumView } from "@/lib/analytics";
 import { LikeButton } from "@/components/site/LikeButton";
 import { FavoriteButton } from "@/components/site/FavoriteButton";
 import { getPostgresAlbumById } from "@/server/queries";
 import { resolveImageUrl, BROKEN_IMAGE_FALLBACK } from "@/lib/asset-resolver";
+import { AlbumCard } from "@/components/site/AlbumCard";
 
 const getAlbumServerFn = createServerFn({ method: "GET" })
   .validator((albumId: string) => albumId)
@@ -76,8 +77,11 @@ export const Route = createFileRoute("/album/$albumId")({
       };
     }
     const { album } = loaderData;
-    const title = `${album.festival.name} ឆ្នាំ ${toKhmerNumber(album.year)} — វត្តពារាំង | Wat Peareang Archive`;
-    const description = `${toKhmerNumber(album.photoCount)} រូបភាពពី ${album.festival.name} ក្នុងឆ្នាំ ${toKhmerNumber(album.year)} នៅវត្តពារាំង។`;
+    const displayTitle = album.title && album.title !== album.festival.name
+      ? `${album.title} (${album.festival.name})`
+      : album.festival.name;
+    const title = `${displayTitle} ឆ្នាំ ${toKhmerNumber(album.year)} — វត្តពារាំង | Wat Peareang Archive`;
+    const description = `${toKhmerNumber(album.photoCount)} រូបភាពពី ${displayTitle} ក្នុងឆ្នាំ ${toKhmerNumber(album.year)} នៅវត្តពារាំង។`;
     const canonicalUrl = `https://wat-peareang-2027.onrender.com/album/${album.id}`;
     const coverUrl = album.coverImage || album.festival.cover;
     return {
@@ -107,6 +111,42 @@ function AlbumDetail() {
 
   const { data: dbAlbum } = useAlbum(albumId);
   const album = dbAlbum ?? initialAlbum;
+
+  const { data: allAlbums = [] } = useAlbums();
+
+  // Direct children (Sub-albums) belonging to this album, sorted by sortOrder
+  const subAlbums = useMemo(() => {
+    if (!album?.id) return [];
+    return allAlbums
+      .filter((a) => a.parentAlbumId === album.id)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  }, [allAlbums, album?.id]);
+
+  // Full ancestor breadcrumb chain (Root -> Parent -> Grandparent -> ... -> direct Parent)
+  const breadcrumbChain = useMemo(() => {
+    if (!album?.parentAlbumId) return [];
+    const chain: Album[] = [];
+    const albumMap = new Map(allAlbums.map((a) => [a.id, a]));
+    albumMap.set(album.id, album);
+
+    let currentParentId: string | null | undefined = album.parentAlbumId;
+    const visited = new Set<string>([album.id]);
+
+    while (currentParentId) {
+      if (visited.has(currentParentId)) break;
+      visited.add(currentParentId);
+
+      const parent = albumMap.get(currentParentId);
+      if (parent) {
+        chain.unshift(parent);
+        currentParentId = parent.parentAlbumId;
+      } else {
+        break;
+      }
+    }
+
+    return chain;
+  }, [allAlbums, album]);
 
   const handleBack = () => {
     if (search.from === "home") {
@@ -222,16 +262,44 @@ function AlbumDetail() {
         <div className="absolute inset-0 z-[2] hero-scrim" />
         <div className="absolute inset-0 z-[3]">
           <div className="mx-auto flex h-full max-w-[1400px] flex-col justify-end px-4 pb-8 lg:px-8">
-            <a
-              href={backHref}
-              onClick={(e) => {
-                e.preventDefault();
-                handleBack();
-              }}
-              className="mb-4 inline-flex w-max items-center gap-1.5 rounded-full bg-background/85 px-3 py-1.5 text-xs backdrop-blur-sm"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" /> Albums
-            </a>
+            <nav aria-label="Breadcrumb" className="mb-4 flex flex-wrap items-center gap-1.5 text-xs">
+              <a
+                href={backHref}
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleBack();
+                }}
+                className="inline-flex items-center gap-1.5 rounded-full bg-background/85 hover:bg-background px-3 py-1.5 backdrop-blur-sm text-foreground hover:text-gold transition-colors font-medium shadow-xs"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" /> Albums
+              </a>
+              {breadcrumbChain.map((ancestor) => (
+                <div key={ancestor.id} className="flex items-center gap-1.5">
+                  <span className="text-white/60 font-bold select-none">/</span>
+                  <Link
+                    to="/album/$albumId"
+                    params={{ albumId: ancestor.id }}
+                    {...(search ? { search } : {})}
+                    className="inline-flex items-center gap-1 rounded-full bg-background/75 hover:bg-background px-3 py-1.5 backdrop-blur-sm text-foreground hover:text-gold transition-colors font-medium truncate max-w-[180px] sm:max-w-[240px] shadow-xs"
+                    title={ancestor.title || ancestor.festival.name}
+                  >
+                    <Folder className="h-3 w-3 text-gold shrink-0" />
+                    <span className="truncate">{ancestor.title || ancestor.festival.name}</span>
+                  </Link>
+                </div>
+              ))}
+              {breadcrumbChain.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-white/60 font-bold select-none">/</span>
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full bg-gold/25 border border-gold/40 px-3 py-1.5 backdrop-blur-sm text-white font-semibold truncate max-w-[180px] sm:max-w-[240px] shadow-xs"
+                    title={album.title || album.festival.name}
+                  >
+                    <span className="truncate">{album.title || album.festival.name}</span>
+                  </span>
+                </div>
+              )}
+            </nav>
             <h1 className="flex items-center gap-3 text-2xl text-primary-foreground md:text-4xl">
               <span
                 className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl text-lg"
@@ -239,10 +307,15 @@ function AlbumDetail() {
               >
                 {album.festival.emoji}
               </span>
-              <span className="min-w-0 truncate">{album.festival.name}</span>
+              <span className="min-w-0 truncate">{album.title || album.festival.name}</span>
             </h1>
             <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-primary-foreground/85">
               <span>ឆ្នាំ {toKhmerNumber(album.year)}</span>
+              {subAlbums.length > 0 && (
+                <span className="flex items-center gap-1.5 text-amber-300">
+                  <Folder className="h-4 w-4" /> {toKhmerNumber(subAlbums.length)} អាល់ប៊ុមរង
+                </span>
+              )}
               <span className="flex items-center gap-1.5">
                 <Images className="h-4 w-4" /> {toKhmerNumber(displayPhotoCount)} រូបភាព
               </span>
@@ -295,6 +368,36 @@ function AlbumDetail() {
       </section>
 
       <section className="mx-auto max-w-[1400px] px-4 py-10 lg:px-8">
+        {/* Sub-albums Section */}
+        {subAlbums.length > 0 && (
+          <div className="mb-12 space-y-6">
+            <div className="flex items-center justify-between border-b border-border/60 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-8 w-8 place-items-center rounded-xl bg-gold/15 text-gold text-base">
+                  📁
+                </span>
+                <h2 className="text-xl sm:text-2xl font-bold text-foreground">
+                  អាល់ប៊ុមរង ({toKhmerNumber(subAlbums.length)})
+                </h2>
+              </div>
+              <span className="text-xs text-muted-foreground">
+                ចុចលើ Album ដើម្បីមើលរូបថត ឬថតរងបន្ត
+              </span>
+            </div>
+
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {subAlbums.map((child, i) => (
+                <AlbumCard
+                  key={child.id}
+                  album={child}
+                  index={i + 1}
+                  albumLinkSearch={search}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Media Switcher Tabs (if videos exist) */}
         {videos.length > 0 && (
           <div className="mb-8 flex items-center gap-3 border-b border-border/60 pb-4">
@@ -372,12 +475,17 @@ function AlbumDetail() {
                   </div>
                 ))}
               </div>
-            ) : (
+            ) : videos.length > 0 ? (
               <div className="rounded-3xl border border-dashed border-border bg-card/40 p-12 text-center text-muted-foreground">
                 <Images className="mx-auto mb-3 h-10 w-10 opacity-40" />
                 <p>មិនទាន់មានរូបភាពក្នុង Album នេះនៅឡើយទេ។</p>
               </div>
-            )}
+            ) : subAlbums.length === 0 ? (
+              <div className="rounded-3xl border border-dashed border-border bg-card/40 p-12 text-center text-muted-foreground">
+                <Images className="mx-auto mb-3 h-10 w-10 opacity-40" />
+                <p>មិនទាន់មានរូបភាព ឬអាល់ប៊ុមរងក្នុង Album នេះនៅឡើយទេ។</p>
+              </div>
+            ) : null}
           </>
         )}
 

@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { toKhmerNumber, type Festival } from "@/data/archive";
 import { cn } from "@/lib/utils";
+import { resolveImageUrl } from "@/lib/asset-resolver";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFestivals, useYears, useAlbums } from "@/hooks/useArchiveData";
 import { useCreateAlbum } from "@/hooks/useAdminData";
 import { useAuth } from "@/hooks/useAuth";
@@ -56,7 +58,37 @@ export const Route = createFileRoute("/festivals")({
   component: FestivalsPage,
 });
 
+interface FestivalEventItem {
+  id: string;
+  festivalId: string;
+  year: number;
+  nameKh: string;
+  nameEn?: string | null;
+  description?: string | null;
+  eventDate?: string | null;
+  location: string;
+  icon: string;
+  coverImage?: string | null;
+  status: string;
+  sortOrder: number;
+  albums: Array<{
+    id: string;
+    festivalId: string;
+    year: number;
+    title: string;
+    description?: string | null;
+    location?: string;
+    coverImage?: string | null;
+    photoCount?: number;
+    sortOrder?: number;
+    parentAlbumId?: string | null;
+    festival?: Festival;
+  }>;
+  photoCount: number;
+}
+
 function FestivalsPage() {
+  const queryClient = useQueryClient();
   const { data: festivals = [], isLoading: loadingFestivals } = useFestivals();
   const { data: years = [], isLoading: loadingYears } = useYears();
   const { data: allAlbums = [] } = useAlbums();
@@ -96,14 +128,71 @@ function FestivalsPage() {
     });
   }, [festivalYearAlbums, activeFestival.id, selectedYear]);
 
-  // Albums for active festival across all years (for header counts)
+  // Query Events and their associated Root Albums for active Festival + Year
+  const { data: festivalEvents = [], isLoading: loadingEvents } = useQuery<FestivalEventItem[]>({
+    queryKey: ["archive", "events", activeFestival.id, selectedYear],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/archive/events?festivalId=${encodeURIComponent(activeFestival.id)}&year=${selectedYear}`,
+      );
+      if (!res.ok) {
+        throw new Error("Failed to fetch events");
+      }
+      const json = await res.json();
+      return json.success && Array.isArray(json.data) ? json.data : [];
+    },
+    staleTime: 1000 * 60 * 5,
+  });
+
+  // Filter events that actually have root albums (hide empty events from visitors)
+  const activeEventsWithAlbums = useMemo(() => {
+    return festivalEvents.filter((ev) => ev.albums && ev.albums.length > 0);
+  }, [festivalEvents]);
+
+  // Robust fallback: if event query returned no events with albums, but displayedAlbums has root albums
+  const eventsToDisplay = useMemo(() => {
+    if (activeEventsWithAlbums.length > 0) {
+      return activeEventsWithAlbums;
+    }
+    if (!loadingEvents && displayedAlbums.length > 0) {
+      const rootAlbums = displayedAlbums.filter((a) => !a.parentAlbumId);
+      if (rootAlbums.length > 0) {
+        return [
+          {
+            id: `${activeFestival.id}-${selectedYear}-general`,
+            festivalId: activeFestival.id,
+            year: selectedYear,
+            nameKh: "ពិធីបុណ្យទូទៅ & កម្រងរូបភាពរួម",
+            nameEn: "General Celebrations & Albums",
+            description: `កម្រងរូបភាពនៃ ${activeFestival.name} ប្រចាំឆ្នាំ ${selectedYear}`,
+            location: "វត្តពារាំង",
+            icon: activeFestival.emoji || "🎉",
+            status: "published",
+            sortOrder: 9999,
+            albums: rootAlbums,
+            photoCount: rootAlbums.reduce((sum, a) => sum + (a.photoCount || 0), 0),
+          },
+        ];
+      }
+    }
+    return [];
+  }, [activeEventsWithAlbums, loadingEvents, displayedAlbums, activeFestival, selectedYear]);
+
+  // Total root albums across displayed events
+  const totalRootAlbums = useMemo(() => {
+    return eventsToDisplay.reduce((sum, ev) => sum + (ev.albums?.length || 0), 0);
+  }, [eventsToDisplay]);
+
+  // Root Albums for active festival across all years (for hero banner counts)
   const allFestivalAlbums = useMemo(() => {
-    return allAlbums.filter((a) => a.festivalId === activeFestival.id);
+    return allAlbums.filter((a) => a.festivalId === activeFestival.id && !a.parentAlbumId);
   }, [allAlbums, activeFestival.id]);
 
   const totalPhotos = useMemo(() => {
-    return allFestivalAlbums.reduce((sum, a) => sum + (a.photoCount || 0), 0);
-  }, [allFestivalAlbums]);
+    return allAlbums
+      .filter((a) => a.festivalId === activeFestival.id)
+      .reduce((sum, a) => sum + (a.photoCount || 0), 0);
+  }, [allAlbums, activeFestival.id]);
 
   const handleSelectFestival = (festId: string) => {
     setActiveFestivalId(festId);
@@ -138,6 +227,9 @@ function FestivalsPage() {
         description: newAlbumDescription.trim() || undefined,
         coverImage: newAlbumCover.trim() || undefined,
       });
+
+      queryClient.invalidateQueries({ queryKey: ["archive", "events"] });
+      queryClient.invalidateQueries({ queryKey: ["archive", "albums"] });
 
       toast.success(
         `បានបន្ថែម Album «${newAlbumTitle.trim()}» ទៅ ${activeFestival.name} ឆ្នាំ ${toKhmerNumber(selectedYear)} រួចរាល់!`,
@@ -218,8 +310,8 @@ function FestivalsPage() {
 
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {festivals.map((f) => {
-              const albumsOfFest = allAlbums.filter((a) => a.festivalId === f.id);
-              const photosOfFest = albumsOfFest.reduce((sum, a) => sum + (a.photoCount || 0), 0);
+              const albumsOfFest = allAlbums.filter((a) => a.festivalId === f.id && !a.parentAlbumId);
+              const photosOfFest = allAlbums.filter((a) => a.festivalId === f.id).reduce((sum, a) => sum + (a.photoCount || 0), 0);
 
               return (
                 <article
@@ -403,8 +495,8 @@ function FestivalsPage() {
             </div>
           </div>
 
-          {/* COMPACT ALBUMS ROW FOR SELECTED FESTIVAL + YEAR */}
-          <div className="space-y-4 pt-2">
+          {/* FESTIVAL -> YEAR -> EVENT -> ROOT ALBUMS HIERARCHY */}
+          <div className="space-y-6 pt-2">
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center gap-2 text-sm font-bold text-foreground">
                 <span className="text-base">{activeFestival.emoji}</span>
@@ -413,90 +505,167 @@ function FestivalsPage() {
                   — ឆ្នាំ {toKhmerNumber(selectedYear)}
                 </span>
                 <span className="text-xs font-medium text-gold bg-gold/10 px-2 py-0.5 rounded-full">
-                  {toKhmerNumber(displayedAlbums.length)} Albums
+                  {toKhmerNumber(totalRootAlbums)} Albums
                 </span>
               </div>
-              <span className="text-xs text-muted-foreground">
-                ចុចលើ Album ដើម្បីមើលរូបភាព និង Lightbox
-              </span>
-            </div>
-
-            {loadingAlbums ? (
-              <div className="flex items-center gap-2 overflow-x-auto pb-2">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <div
-                    key={i}
-                    className="w-28 sm:w-32 h-28 shrink-0 rounded-xl border border-border bg-muted/40 animate-pulse"
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="no-scrollbar flex items-center gap-2 overflow-x-auto pb-2 pt-0.5 px-0.5">
-                {displayedAlbums.length === 0 ? (
-                  <div className="flex items-center gap-2.5 py-2 px-3 rounded-xl border border-dashed border-border bg-card/40 text-xs text-muted-foreground">
-                    <span>
-                      មិនទាន់មាន Album សម្រាប់ «{activeFestival.name}» ក្នុងឆ្នាំ {toKhmerNumber(selectedYear)} នៅឡើយទេ។
-                    </span>
-                  </div>
-                ) : (
-                  displayedAlbums.map((alb) => (
-                    <Link
-                      key={alb.id}
-                      to="/album/$albumId"
-                      params={{ albumId: alb.id }}
-                      className="group relative flex flex-col w-28 sm:w-32 shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:border-gold/60 hover:shadow-card cursor-pointer"
-                    >
-                      {/* Cover Thumbnail */}
-                      <div className="relative aspect-[4/3] w-full overflow-hidden bg-secondary/80">
-                        {/* Ambient Backdrop */}
-                        <img
-                          src={alb.coverImage || activeFestival.cover}
-                          alt=""
-                          aria-hidden="true"
-                          className="absolute inset-0 h-full w-full object-cover blur-md scale-110 opacity-35 dark:opacity-25 pointer-events-none"
-                        />
-                        {/* Uncropped Cover */}
-                        <img
-                          src={alb.coverImage || activeFestival.cover}
-                          alt={alb.title}
-                          loading="lazy"
-                          className="relative z-[1] h-full w-full object-contain transition-transform duration-300 group-hover:scale-105"
-                        />
-                        <div className="absolute inset-0 z-[2] bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-60 group-hover:opacity-25 transition-opacity" />
-                        <span className="absolute bottom-1 right-1 z-[3] rounded-full bg-black/65 px-1.5 py-0.5 text-[9px] font-medium text-white backdrop-blur-xs flex items-center gap-0.5">
-                          <Camera className="h-2 w-2" />
-                          {toKhmerNumber(alb.photoCount || 0)}
-                        </span>
-                      </div>
-
-                      {/* Title */}
-                      <div className="p-1.5 pt-1.5 pb-2">
-                        <h4 className="text-[11px] sm:text-xs font-semibold text-foreground truncate group-hover:text-gold transition-colors leading-tight">
-                          {alb.title}
-                        </h4>
-                      </div>
-                    </Link>
-                  ))
-                )}
-
-                {/* [+ បន្ថែម Album] Action Card */}
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-muted-foreground hidden sm:inline">
+                  ចុចលើ Album ដើម្បីមើលរូបភាព និង Lightbox
+                </span>
                 {canManageAlbums && (
                   <button
                     type="button"
                     onClick={() => setIsAddAlbumOpen(true)}
-                    className="group flex flex-col items-center justify-center w-28 sm:w-32 shrink-0 aspect-[4/3.4] rounded-xl border-2 border-dashed border-gold/40 bg-gold/5 hover:bg-gold/10 hover:border-gold transition-all duration-200 cursor-pointer p-2 text-center"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold/10 hover:bg-gold/20 px-3 py-1 text-xs font-semibold text-gold transition-colors cursor-pointer"
                   >
-                    <div className="grid h-7 w-7 place-items-center rounded-full bg-gold/20 text-gold group-hover:scale-110 transition-transform mb-1">
-                      <Plus className="h-3.5 w-3.5" />
-                    </div>
-                    <span className="text-[11px] font-bold text-foreground group-hover:text-gold leading-tight">
-                      + បន្ថែម Album
-                    </span>
-                    <span className="text-[9px] text-muted-foreground mt-0.5 truncate max-w-full">
-                      {activeFestival.name.replace("បុណ្យ", "")} {toKhmerNumber(selectedYear)}
-                    </span>
+                    <Plus className="h-3 w-3" />
+                    + បន្ថែម Album
                   </button>
                 )}
+              </div>
+            </div>
+
+            {loadingEvents ? (
+              <div className="space-y-4">
+                {[1, 2].map((i) => (
+                  <div key={i} className="space-y-3 rounded-2xl border border-border/70 bg-card/40 p-4">
+                    <div className="flex items-center gap-2">
+                      <div className="h-6 w-6 rounded-full bg-muted/60 animate-pulse" />
+                      <div className="h-4 w-36 rounded-md bg-muted/60 animate-pulse" />
+                    </div>
+                    <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                      {[1, 2, 3, 4].map((j) => (
+                        <div
+                          key={j}
+                          className="w-28 sm:w-32 h-28 shrink-0 rounded-xl border border-border bg-muted/40 animate-pulse"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : eventsToDisplay.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 px-4 rounded-2xl border border-dashed border-border bg-card/40 text-center space-y-3">
+                <span className="text-3xl">{activeFestival.emoji}</span>
+                <p className="text-xs sm:text-sm text-muted-foreground max-w-md">
+                  មិនទាន់មានកម្មវិធីបុណ្យ ឬ Album សម្រាប់ «{activeFestival.name}» ក្នុងឆ្នាំ {toKhmerNumber(selectedYear)} នៅឡើយទេ។
+                </p>
+                {canManageAlbums && (
+                  <button
+                    type="button"
+                    onClick={() => setIsAddAlbumOpen(true)}
+                    className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-gold bg-gold/10 px-3.5 py-1.5 text-xs font-semibold text-gold hover:bg-gold/20 transition-colors cursor-pointer"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    + បន្ថែម Album ដំបូង
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {eventsToDisplay.map((event, eventIdx) => (
+                  <div
+                    key={event.id}
+                    className="rounded-2xl border border-border/80 bg-card/60 p-4 shadow-2xs space-y-3 transition-colors hover:border-border"
+                  >
+                    {/* Event Header */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/50 pb-2.5">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-lg leading-none shrink-0">{event.icon || "🎉"}</span>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-xs sm:text-sm font-bold text-foreground">
+                              {event.nameKh}
+                            </h3>
+                            {event.nameEn && (
+                              <span className="text-[11px] text-muted-foreground font-normal hidden md:inline">
+                                ({event.nameEn})
+                              </span>
+                            )}
+                          </div>
+                          {event.description && (
+                            <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
+                              {event.description}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] sm:text-xs font-medium text-gold bg-gold/10 px-2 py-0.5 rounded-full">
+                          {toKhmerNumber(event.albums.length)} Albums
+                        </span>
+                        {event.photoCount > 0 && (
+                          <span className="text-[10px] sm:text-xs font-medium text-muted-foreground bg-secondary px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Camera className="h-2.5 w-2.5" />
+                            {toKhmerNumber(event.photoCount)} រូប
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Albums Horizontal Scroll Row */}
+                    <div className="no-scrollbar flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 px-0.5">
+                      {event.albums.map((alb) => (
+                        <Link
+                          key={alb.id}
+                          to="/album/$albumId"
+                          params={{ albumId: alb.id }}
+                          className="group relative flex flex-col w-28 sm:w-32 shrink-0 overflow-hidden rounded-xl border border-border bg-card shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:border-gold/60 hover:shadow-card cursor-pointer"
+                        >
+                          {/* Cover Thumbnail */}
+                          <div className="relative aspect-[4/3] w-full overflow-hidden bg-secondary/80">
+                            {/* Ambient Backdrop */}
+                            <img
+                              src={resolveImageUrl(alb.coverImage || activeFestival.cover, activeFestival.id)}
+                              alt=""
+                              aria-hidden="true"
+                              className="absolute inset-0 h-full w-full object-cover blur-md scale-110 opacity-35 dark:opacity-25 pointer-events-none"
+                            />
+                            {/* Uncropped Cover */}
+                            <img
+                              src={resolveImageUrl(alb.coverImage || activeFestival.cover, activeFestival.id)}
+                              alt={alb.title}
+                              loading="lazy"
+                              className="relative z-[1] h-full w-full object-contain transition-transform duration-300 group-hover:scale-105"
+                            />
+                            <div className="absolute inset-0 z-[2] bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-60 group-hover:opacity-25 transition-opacity" />
+                            <span className="absolute bottom-1 right-1 z-[3] rounded-full bg-black/65 px-1.5 py-0.5 text-[9px] font-medium text-white backdrop-blur-xs flex items-center gap-0.5">
+                              <Camera className="h-2 w-2" />
+                              {toKhmerNumber(alb.photoCount || 0)}
+                            </span>
+                          </div>
+
+                          {/* Title */}
+                          <div className="p-1.5 pt-1.5 pb-2">
+                            <h4 className="text-[11px] sm:text-xs font-semibold text-foreground truncate group-hover:text-gold transition-colors leading-tight">
+                              {alb.title}
+                            </h4>
+                          </div>
+                        </Link>
+                      ))}
+
+                      {/* [+ បន្ថែម Album] Action Card on first event */}
+                      {canManageAlbums && eventIdx === 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setIsAddAlbumOpen(true)}
+                          className="group flex flex-col items-center justify-center w-28 sm:w-32 shrink-0 aspect-[4/3.4] rounded-xl border-2 border-dashed border-gold/40 bg-gold/5 hover:bg-gold/10 hover:border-gold transition-all duration-200 cursor-pointer p-2 text-center"
+                        >
+                          <div className="grid h-7 w-7 place-items-center rounded-full bg-gold/20 text-gold group-hover:scale-110 transition-transform mb-1">
+                            <Plus className="h-3.5 w-3.5" />
+                          </div>
+                          <span className="text-[11px] font-bold text-foreground group-hover:text-gold leading-tight">
+                            + បន្ថែម Album
+                          </span>
+                          <span className="text-[9px] text-muted-foreground mt-0.5 truncate max-w-full">
+                            {activeFestival.name.replace("បុណ្យ", "")} {toKhmerNumber(selectedYear)}
+                          </span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
