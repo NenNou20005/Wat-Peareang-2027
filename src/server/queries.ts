@@ -1533,8 +1533,49 @@ export async function getAdminTrashItems() {
       canRestore: true,
     }));
 
+    // Fetch parent statuses for any trashed albums that have parentAlbumId
+    const parentIds = Array.from(
+      new Set(
+        trashedAlbums
+          .map(({ album }) => album.parentAlbumId)
+          .filter((id): id is string => Boolean(id && id.trim() !== "")),
+      ),
+    );
+
+    const parentMap = new Map<string, string>();
+    if (parentIds.length > 0) {
+      const parentRows = await db
+        .select({
+          id: schema.albums.id,
+          status: schema.albums.status,
+        })
+        .from(schema.albums)
+        .where(inArray(schema.albums.id, parentIds));
+
+      for (const p of parentRows) {
+        parentMap.set(p.id, p.status);
+      }
+    }
+
     const mappedAlbums = trashedAlbums.map(({ album, festival }) => {
       const festivalActive = festival && festival.status !== "trashed";
+
+      let parentActive = true;
+      if (album.parentAlbumId) {
+        const parentStatus = parentMap.get(album.parentAlbumId);
+        if (!parentStatus || parentStatus === "trashed") {
+          parentActive = false;
+        }
+      }
+
+      const canRestore = Boolean(festivalActive && parentActive);
+      let blockReason: string | undefined;
+      if (!festivalActive) {
+        blockReason = "ត្រូវស្តារប្រភេទបុណ្យឡើងវិញជាមុនសិន ទើបអាចស្តារ Album នេះបាន។";
+      } else if (!parentActive) {
+        blockReason = "ត្រូវស្តារ Parent Album ឡើងវិញជាមុនសិន ទើបអាចស្តារ Sub-album នេះបាន។";
+      }
+
       return {
         id: album.id,
         type: "album" as const,
@@ -1542,13 +1583,12 @@ export async function getAdminTrashItems() {
         year: album.year,
         festivalId: album.festivalId,
         festivalName: festival?.name,
+        parentAlbumId: album.parentAlbumId,
         photoCount: album.photoCount || 0,
         deletedAt: album.updatedAt.toISOString(),
         trashedAt: album.updatedAt.toISOString(),
-        canRestore: !!festivalActive,
-        blockReason: !festivalActive
-          ? "ត្រូវស្តារប្រភេទបុណ្យឡើងវិញជាមុនសិន ទើបអាចស្តារ Album នេះបាន។"
-          : undefined,
+        canRestore,
+        blockReason,
       };
     });
 

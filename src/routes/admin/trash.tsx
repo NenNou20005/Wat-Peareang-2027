@@ -356,6 +356,9 @@ function AdminTrashPage() {
                       (album as { festivalName?: string }).festivalName ||
                       album.festivalId ||
                       "Album";
+                    const canRestore = (album as { canRestore?: boolean }).canRestore !== false;
+                    const blockReason = (album as { blockReason?: string }).blockReason;
+
                     return (
                       <div
                         key={album.id}
@@ -376,6 +379,15 @@ function AdminTrashPage() {
                           <p className="text-[10px] text-muted-foreground font-mono">
                             {album.photoCount ?? 0} រូបភាព
                           </p>
+                          {!canRestore && blockReason && (
+                            <p
+                              className="mt-1 flex items-center gap-1 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                              title={blockReason}
+                            >
+                              <AlertTriangle className="h-3 w-3 shrink-0" />
+                              <span className="truncate">{blockReason}</span>
+                            </p>
+                          )}
                         </div>
 
                         <div className="flex items-center gap-1.5 shrink-0">
@@ -383,9 +395,9 @@ function AdminTrashPage() {
                             size="sm"
                             variant="outline"
                             onClick={() => handleRestore("album", album.id, albumTitle)}
-                            disabled={actionLoadingId === album.id}
-                            className="h-8 rounded-xl text-xs gap-1 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10"
-                            title="ស្តារ Album ឡើងវិញ"
+                            disabled={actionLoadingId === album.id || !canRestore}
+                            className="h-8 rounded-xl text-xs gap-1 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title={!canRestore && blockReason ? blockReason : "ស្តារ Album ឡើងវិញ"}
                           >
                             <RotateCcw className="h-3 w-3" /> ស្តារ
                           </Button>

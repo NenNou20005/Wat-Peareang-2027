@@ -8,7 +8,7 @@ import {
 } from "../data/static-archive";
 import { getDrizzleDb, isPostgresConfigured, getPgPool } from "../db/index.ts";
 import * as schema from "../db/schema.ts";
-import { eq, and, sql, desc, gte, inArray } from "drizzle-orm";
+import { eq, ne, and, sql, desc, gte, inArray } from "drizzle-orm";
 import { migrateJsonToPostgres, initializeDatabaseSchema } from "../db/migrate.ts";
 import { seedStaticArchiveToPostgres } from "../db/seed-archive.ts";
 import { getStorageProvider } from "./storage/index.ts";
@@ -2086,6 +2086,18 @@ class Database {
   }
 
   public async trashAlbum(id: string, user: User): Promise<{ success: boolean; error?: string }> {
+    // 1. In-memory guard: check for active child albums
+    const activeMemChild = this.data.albums.find(
+      (a) => a.parentAlbumId === id && a.status !== "trashed",
+    );
+    if (activeMemChild) {
+      return {
+        success: false,
+        error:
+          "មិនអាចផ្លាស់ទី Album មេទៅធុងសំរាមបានទេ ព្រោះមាន Sub-album នៅខាងក្នុង។ សូមផ្លាស់ទី ឬលុប Sub-albums ទាំងនោះចេញជាមុនសិន។",
+      };
+    }
+
     const drizzle = getDrizzleDb();
     let foundInPg = false;
     let albumTitle = id;
@@ -2101,6 +2113,27 @@ class Database {
         if (pgAlbum) {
           foundInPg = true;
           albumTitle = pgAlbum.title;
+
+          // 2. PostgreSQL guard: check for active child albums
+          const [activePgChild] = await drizzle
+            .select({ id: schema.albums.id })
+            .from(schema.albums)
+            .where(
+              and(
+                eq(schema.albums.parentAlbumId, id),
+                ne(schema.albums.status, "trashed"),
+              ),
+            )
+            .limit(1);
+
+          if (activePgChild) {
+            return {
+              success: false,
+              error:
+                "មិនអាចផ្លាស់ទី Album មេទៅធុងសំរាមបានទេ ព្រោះមាន Sub-album នៅខាងក្នុង។ សូមផ្លាស់ទី ឬលុប Sub-albums ទាំងនោះចេញជាមុនសិន។",
+            };
+          }
+
           await drizzle
             .update(schema.albums)
             .set({
@@ -2143,6 +2176,18 @@ class Database {
   }
 
   public async restoreAlbum(id: string, user: User): Promise<{ success: boolean; error?: string }> {
+    // 1. In-memory guard: check if parent album is trashed or missing
+    const memAlbum = this.data.albums.find((a) => a.id === id);
+    if (memAlbum?.parentAlbumId) {
+      const memParent = this.data.albums.find((a) => a.id === memAlbum.parentAlbumId);
+      if (!memParent || memParent.status === "trashed") {
+        return {
+          success: false,
+          error: "ត្រូវស្តារ Parent Album ឡើងវិញជាមុនសិន ទើបអាចស្តារ Sub-album នេះបាន។",
+        };
+      }
+    }
+
     const drizzle = getDrizzleDb();
     let foundInPg = false;
     let albumTitle = id;
@@ -2158,6 +2203,23 @@ class Database {
         if (pgAlbum) {
           foundInPg = true;
           albumTitle = pgAlbum.title;
+
+          // 2. PostgreSQL guard: check if parent album is trashed or missing
+          if (pgAlbum.parentAlbumId) {
+            const [pgParent] = await drizzle
+              .select({ id: schema.albums.id, status: schema.albums.status })
+              .from(schema.albums)
+              .where(eq(schema.albums.id, pgAlbum.parentAlbumId))
+              .limit(1);
+
+            if (!pgParent || pgParent.status === "trashed") {
+              return {
+                success: false,
+                error: "ត្រូវស្តារ Parent Album ឡើងវិញជាមុនសិន ទើបអាចស្តារ Sub-album នេះបាន។",
+              };
+            }
+          }
+
           await drizzle
             .update(schema.albums)
             .set({
@@ -2204,6 +2266,15 @@ class Database {
       return { success: false, error: "មានតែ Super Admin ប៉ុណ្ណោះដែលអាចលុបជាអចិន្ត្រៃយ៍បាន។" };
     }
 
+    // 1. Guard: Check in-memory state for ANY child albums before doing anything
+    const hasMemChild = this.data.albums.some((a) => a.parentAlbumId === id);
+    if (hasMemChild) {
+      return {
+        success: false,
+        error: "មិនអាចលុប Album មេជាអចិន្ត្រៃយ៍បានទេ ព្រោះមាន Sub-album អាស្រ័យលើ Album នេះ។",
+      };
+    }
+
     const drizzle = getDrizzleDb();
     let foundInPg = false;
     let albumTitle = id;
@@ -2211,6 +2282,20 @@ class Database {
 
     if (drizzle && isPostgresConfigured()) {
       try {
+        // 2. Guard: Check PostgreSQL for ANY child albums before deleting anything
+        const [pgChild] = await drizzle
+          .select({ id: schema.albums.id })
+          .from(schema.albums)
+          .where(eq(schema.albums.parentAlbumId, id))
+          .limit(1);
+
+        if (pgChild) {
+          return {
+            success: false,
+            error: "មិនអាចលុប Album មេជាអចិន្ត្រៃយ៍បានទេ ព្រោះមាន Sub-album អាស្រ័យលើ Album នេះ។",
+          };
+        }
+
         const [pgAlbum] = await drizzle
           .select()
           .from(schema.albums)
