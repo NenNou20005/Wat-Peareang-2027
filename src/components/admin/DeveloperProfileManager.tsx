@@ -151,7 +151,7 @@ export function DeveloperProfileManager() {
   return (
     <div
       id="developer-profile-manager-card"
-      className="rounded-3xl border-2 border-gold/40 bg-card p-6 shadow-card space-y-6"
+      className="rounded-3xl border border-gold/30 bg-card p-6 shadow-card hover:border-gold/50 transition-colors space-y-6"
     >
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border/60 pb-4">
@@ -199,7 +199,7 @@ export function DeveloperProfileManager() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Box 1: Current Profile Circle Preview */}
-        <div className="space-y-3 flex flex-col items-center text-center p-4 rounded-2xl border border-border/70 bg-secondary/20">
+        <div className="space-y-3 flex flex-col items-center text-center p-4 rounded-2xl border border-border/70 bg-secondary/20 min-h-[300px] justify-between">
           <div className="w-full flex items-center justify-between text-xs pb-2 border-b border-border/40">
             <span className="font-semibold text-foreground flex items-center gap-1.5">
               <span>រូបថតបច្ចុប្បន្ន (Current Profile)</span>
@@ -209,9 +209,9 @@ export function DeveloperProfileManager() {
             </span>
           </div>
 
-          <div className="my-auto py-3 flex flex-col items-center">
+          <div className="my-auto py-2 flex flex-col items-center justify-center">
             {isLoading ? (
-              <div className="grid h-40 w-40 place-items-center rounded-full bg-secondary/40 border border-border">
+              <div className="grid h-36 w-36 sm:h-40 sm:w-40 place-items-center rounded-full bg-secondary/40 border border-border">
                 <Loader2 className="h-7 w-7 animate-spin text-muted-foreground/60" />
               </div>
             ) : (
@@ -240,7 +240,7 @@ export function DeveloperProfileManager() {
         </div>
 
         {/* Box 2: Select from PC & Preview New Image (Circle 1:1) */}
-        <div className="space-y-3 flex flex-col items-center text-center p-4 rounded-2xl border-2 border-dashed border-border bg-muted/20 hover:border-gold/50 transition-colors">
+        <div className="space-y-3 flex flex-col items-center text-center p-4 rounded-2xl border-2 border-dashed border-border bg-muted/20 hover:border-gold/50 transition-colors min-h-[300px] justify-between">
           <div className="w-full flex items-center justify-between text-xs pb-2 border-b border-border/40">
             <span className="font-semibold text-foreground flex items-center gap-1.5">
               <span>រូបថតថ្មី (New Profile Preview)</span>
@@ -280,12 +280,12 @@ export function DeveloperProfileManager() {
                   <X className="h-4 w-4" />
                 </Button>
 
-                <div className="mt-3 rounded-full bg-gold text-primary-foreground px-3 py-1 text-[11px] font-bold shadow-sm">
+                <div className="mt-4 rounded-full bg-gold text-primary-foreground px-3 py-1 text-[11px] font-bold shadow-sm">
                   ត្រៀម Save ជារូប Profile ថ្មី (1:1 Circle)
                 </div>
               </div>
             ) : (
-              <div className="space-y-3 py-4 flex flex-col items-center">
+              <div className="space-y-3 py-2 flex flex-col items-center">
                 <div className="grid h-24 w-24 place-items-center rounded-full border-2 border-dashed border-border bg-secondary/50 text-muted-foreground/80">
                   <User className="h-10 w-10 text-muted-foreground/60" />
                 </div>
@@ -316,20 +316,25 @@ export function DeveloperProfileManager() {
       {/* Action Footer */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-border/60">
         <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => fileInputRef.current?.click()}
-            className="rounded-full text-xs font-medium cursor-pointer"
-          >
-            <Upload className="mr-1.5 h-3.5 w-3.5 text-gold" />
-            📁 {selectedFile ? "ជ្រើសរូបផ្សេងទៀត" : "ជ្រើសរូបពី PC"}
-          </Button>
-
-          {selectedFile && (
-            <span className="text-xs text-muted-foreground truncate max-w-[200px] sm:max-w-xs">
-              {selectedFile.name}
-            </span>
+          {selectedFile ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                className="rounded-full text-xs font-medium cursor-pointer"
+              >
+                <Upload className="mr-1.5 h-3.5 w-3.5 text-gold" />
+                📁 ជ្រើសរូបផ្សេងទៀត
+              </Button>
+              <span className="text-xs text-muted-foreground truncate max-w-[200px] sm:max-w-xs">
+                {selectedFile.name}
+              </span>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              ជ្រើសរើសរូបថតសមាមាត្រ 1:1 (រាងការ៉េ) សម្រាប់ទម្រង់រង្វង់មូលស្អាត
+            </p>
           )}
         </div>
 
@@ -371,4 +376,3 @@ export function DeveloperProfileManager() {
     </div>
   );
 }
-
