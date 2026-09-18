@@ -728,6 +728,19 @@ function AdminAlbumsPage() {
   const [formLocation, setFormLocation] = useState("វត្តពារាំង");
   const [formDescription, setFormDescription] = useState("");
   const [formCoverImage, setFormCoverImage] = useState("");
+  const [formParentAlbumId, setFormParentAlbumId] = useState<string | null>(null);
+
+  // Candidate parents for Create Album Dialog (filtered by selected festival + year, excluding trashed)
+  const createCandidateParents = useMemo(() => {
+    const effectiveFestId = formFestId || festivals[0]?.id;
+    const effectiveYear = formYear || years[0] || 2026;
+    return fetchedAlbums.filter(
+      (a) =>
+        a.festivalId === effectiveFestId &&
+        a.year === effectiveYear &&
+        a.status !== "trashed",
+    );
+  }, [fetchedAlbums, formFestId, formYear, festivals, years]);
 
   const handleAddAlbum = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -743,6 +756,7 @@ function AdminAlbumsPage() {
       await createAlbumMutation.mutateAsync({
         festivalId: effectiveFestId,
         year: effectiveYear,
+        parentAlbumId: formParentAlbumId || undefined,
         title: formTitle.trim(),
         location: formLocation.trim() || "វត្តពារាំង",
         description: formDescription.trim() || undefined,
@@ -753,6 +767,7 @@ function AdminAlbumsPage() {
       setFormTitle("");
       setFormDescription("");
       setFormCoverImage("");
+      setFormParentAlbumId(null);
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : "មានបញ្ហាក្នុងការបង្កើត Album។";
       toast.error(errorMsg);
@@ -834,6 +849,7 @@ function AdminAlbumsPage() {
               setFormLocation("វត្តពារាំង");
               setFormDescription("");
               setFormCoverImage("");
+              setFormParentAlbumId(null);
               if (festivals.length > 0 && !formFestId && festivals[0])
                 setFormFestId(festivals[0].id);
               if (years.length > 0 && years[0] !== undefined) setFormYear(years[0]);
@@ -1338,7 +1354,13 @@ function AdminAlbumsPage() {
         )}
 
         {/* Modal: Create Album */}
-        <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+        <Dialog
+          open={isAddOpen}
+          onOpenChange={(open) => {
+            setIsAddOpen(open);
+            if (!open) setFormParentAlbumId(null);
+          }}
+        >
           <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl p-6 shadow-card">
             <DialogHeader>
               <DialogTitle className="font-display text-lg font-bold">
@@ -1366,6 +1388,15 @@ function AdminAlbumsPage() {
                       "បុណ្យ"}
                   </span>
                 </div>
+                {formParentAlbumId && (
+                  <div className="col-span-2 text-xs pt-1 border-t border-gold/20 text-muted-foreground flex items-center gap-1.5">
+                    <span>📁 ដាក់ចូលក្នុង៖</span>
+                    <span className="font-semibold text-gold truncate">
+                      {fetchedAlbums.find((a) => a.id === formParentAlbumId)?.title || formParentAlbumId}
+                    </span>
+                    <span className="text-[10px] text-blue-500 font-medium shrink-0">↳ Sub-album</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1374,7 +1405,10 @@ function AdminAlbumsPage() {
                 <Label className="text-xs font-semibold">ជ្រើសរើសពិធីបុណ្យ</Label>
                 <select
                   value={formFestId}
-                  onChange={(e) => setFormFestId(e.target.value)}
+                  onChange={(e) => {
+                    setFormFestId(e.target.value);
+                    setFormParentAlbumId(null);
+                  }}
                   className="w-full rounded-2xl border border-border bg-card px-3 h-10 text-xs"
                   required
                 >
@@ -1390,7 +1424,10 @@ function AdminAlbumsPage() {
                 <Label className="text-xs font-semibold">ជ្រើសរើសឆ្នាំប្រារព្ធ</Label>
                 <select
                   value={formYear}
-                  onChange={(e) => setFormYear(Number(e.target.value))}
+                  onChange={(e) => {
+                    setFormYear(Number(e.target.value));
+                    setFormParentAlbumId(null);
+                  }}
                   className="w-full rounded-2xl border border-border bg-card px-3 h-10 text-xs"
                   required
                 >
@@ -1400,6 +1437,37 @@ function AdminAlbumsPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Parent Album Selector (Root vs Sub-album) */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold">Album មេ (Parent Album) — ជម្រើស</Label>
+                  {formParentAlbumId && (
+                    <button
+                      type="button"
+                      onClick={() => setFormParentAlbumId(null)}
+                      className="text-[10px] text-gold hover:underline cursor-pointer"
+                    >
+                      កំណត់ជា Root វិញ
+                    </button>
+                  )}
+                </div>
+                <select
+                  value={formParentAlbumId || ""}
+                  onChange={(e) => setFormParentAlbumId(e.target.value ? e.target.value : null)}
+                  className="w-full rounded-2xl border border-border bg-card px-3 h-10 text-xs text-foreground"
+                >
+                  <option value="">📁 កម្រិត Root (ថតចម្បង / No Parent)</option>
+                  {createCandidateParents.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.parentAlbumId ? "↳ " : "📁 "} {p.title} {p.parentAlbumId ? "(Sub-album)" : "(Root)"}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-muted-foreground">
+                  ទុកជា Root Album (ថតចម្បង) ឬជ្រើសរើស Album មេខាងលើដើម្បីបង្កើតជា Sub-album។
+                </p>
               </div>
 
               <div className="space-y-1.5">
@@ -1444,7 +1512,10 @@ function AdminAlbumsPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setIsAddOpen(false)}
+                  onClick={() => {
+                    setIsAddOpen(false);
+                    setFormParentAlbumId(null);
+                  }}
                   className="rounded-full"
                 >
                   បោះបង់

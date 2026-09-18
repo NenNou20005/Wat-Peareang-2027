@@ -596,6 +596,7 @@ export function useCreateAlbum() {
       location?: string | undefined;
       description?: string | undefined;
       coverImage?: string | undefined;
+      parentAlbumId?: string | null | undefined;
     }) => {
       const res = await fetch("/api/admin/albums", {
         method: "POST",
