@@ -1780,6 +1780,7 @@ ${allUrls
         const title = (formData.get("title") as string) || "";
         const photographer = (formData.get("photographer") as string) || "";
         const tags = (formData.get("tags") as string) || "";
+        const confirmDuplicate = formData.get("confirmDuplicate") === "true";
 
         if (!file || typeof file.arrayBuffer !== "function") {
           return json({ success: false, error: "សូមជ្រើសរើសឯកសាររូបភាពដែលត្រូវ Upload។" }, 400);
@@ -1856,15 +1857,7 @@ ${allUrls
           };
         }
 
-        const storage = getStorageProvider();
-        const stored = await storage.saveImage({
-          buffer,
-          originalFilename: file.name,
-          mimeType: detectedMime,
-          albumId,
-        });
-
-        // Compute Phase 1 duplicate detection metadata (SHA-256 and dimensions) safely
+        // Compute SHA-256 hash from original buffer before storage upload
         let sha256: string | null = null;
         try {
           sha256 = crypto.createHash("sha256").update(buffer).digest("hex").toLowerCase();
@@ -1872,6 +1865,73 @@ ${allUrls
           logger.warn("Failed to compute SHA-256 hash for uploaded image", { error: String(err) });
         }
 
+        // Duplicate Image Warning (Admin decision - soft warning, no auto-block, no R2 upload if duplicate)
+        if (sha256 && !confirmDuplicate) {
+          if (drizzle) {
+            const [existingImage] = await drizzle
+              .select({
+                id: schema.images.id,
+                albumId: schema.images.albumId,
+                title: schema.images.title,
+                url: schema.images.url,
+                thumbnailUrl: schema.images.thumbnailUrl,
+                createdAt: schema.images.createdAt,
+                albumTitle: schema.albums.title,
+              })
+              .from(schema.images)
+              .innerJoin(schema.albums, eq(schema.images.albumId, schema.albums.id))
+              .where(
+                and(
+                  eq(schema.images.sha256, sha256),
+                  isNull(schema.images.deletedAt),
+                  sql`${schema.images.status} NOT IN ('trashed', 'trash')`,
+                ),
+              )
+              .limit(1);
+
+            if (existingImage) {
+              return json({
+                success: false,
+                duplicateDetected: true,
+                sha256,
+                existingImage: {
+                  id: existingImage.id,
+                  albumId: existingImage.albumId,
+                  title: existingImage.title,
+                  url: existingImage.url,
+                  thumbnailUrl: existingImage.thumbnailUrl,
+                  createdAt: existingImage.createdAt,
+                  albumTitle: existingImage.albumTitle,
+                },
+                message: `រូបភាពនេះមានស្រាប់ក្នុង Album «${existingImage.albumTitle}» រួចហើយ។`,
+              });
+            }
+          } else {
+            const existingMem = db.getImages().find(
+              (img) => img.sha256 === sha256 && img.status !== "trashed" && !(img as any).deletedAt,
+            );
+            if (existingMem) {
+              const albumObj = db.getAlbum(existingMem.albumId);
+              return json({
+                success: false,
+                duplicateDetected: true,
+                sha256,
+                existingImage: {
+                  id: existingMem.id,
+                  albumId: existingMem.albumId,
+                  title: existingMem.title,
+                  url: existingMem.url,
+                  thumbnailUrl: existingMem.thumbnailUrl,
+                  createdAt: existingMem.createdAt,
+                  albumTitle: albumObj?.title || existingMem.albumId,
+                },
+                message: `រូបភាពនេះមានស្រាប់ក្នុង Album «${albumObj?.title || existingMem.albumId}» រួចហើយ។`,
+              });
+            }
+          }
+        }
+
+        // Extract image dimensions via Sharp
         let width: number | null = null;
         let height: number | null = null;
         try {
@@ -1885,6 +1945,14 @@ ${allUrls
         } catch (err) {
           logger.warn("Failed to extract image dimensions for uploaded image", { error: String(err) });
         }
+
+        const storage = getStorageProvider();
+        const stored = await storage.saveImage({
+          buffer,
+          originalFilename: file.name,
+          mimeType: detectedMime,
+          albumId,
+        });
 
         const newImageId = `img-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
         const newImage = {

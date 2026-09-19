@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Eye,
   Sparkles,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -191,6 +192,21 @@ function AdminImagesPage() {
   );
   const [isUploading, setIsUploading] = useState(false);
 
+  // Duplicate Warning prompt state (Admin decision)
+  const [duplicatePrompt, setDuplicatePrompt] = useState<{
+    item: { id: string; previewUrl: string; file: File };
+    existingImage: {
+      id: string;
+      albumId: string;
+      title: string;
+      url: string;
+      thumbnailUrl?: string | null;
+      createdAt?: string;
+      albumTitle?: string;
+    };
+    resolve: (decision: "skip" | "proceed") => void;
+  } | null>(null);
+
   // Edit modal state
   const [editingImage, setEditingImage] = useState<AdminImage | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -357,30 +373,58 @@ function AdminImagesPage() {
             ? uploadTitle.trim()
             : item.file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
 
-          const formData = new FormData();
-          formData.append("file", item.file);
-          formData.append("albumId", effectiveAlbumId);
-          formData.append("title", itemTitle);
-          if (uploadPhotographer.trim()) {
-            formData.append("photographer", uploadPhotographer.trim());
-          }
-          if (parsedTags && parsedTags.length > 0) {
-            formData.append("tags", parsedTags.join(", "));
+          const makeFormData = (confirmDup = false) => {
+            const fd = new FormData();
+            fd.append("file", item.file);
+            fd.append("albumId", effectiveAlbumId);
+            fd.append("title", itemTitle);
+            if (uploadPhotographer.trim()) {
+              fd.append("photographer", uploadPhotographer.trim());
+            }
+            if (parsedTags && parsedTags.length > 0) {
+              fd.append("tags", parsedTags.join(", "));
+            }
+            if (confirmDup) {
+              fd.append("confirmDuplicate", "true");
+            }
+            return fd;
+          };
+
+          let res = await uploadImageMutation.mutateAsync(makeFormData(false));
+
+          // If duplicate detected, pause and let Admin decide (Keep both vs Cancel)
+          if (res?.duplicateDetected && res.existingImage) {
+            const userDecision = await new Promise<"skip" | "proceed">((resolve) => {
+              setDuplicatePrompt({
+                item,
+                existingImage: res.existingImage!,
+                resolve,
+              });
+            });
+
+            setDuplicatePrompt(null);
+
+            if (userDecision === "proceed") {
+              // Admin explicitly chose "រក្សាទុកទាំងពីរ" -> proceed with upload
+              res = await uploadImageMutation.mutateAsync(makeFormData(true));
+            } else {
+              // Admin chose "បោះបង់ Upload" -> skip this file safely, no R2 upload
+              toast.info(
+                `បានរំលងរូបភាពស្ទួន «${item.file.name}» (មានក្នុង Album «${res.existingImage.albumTitle || res.existingImage.albumId}»)`,
+              );
+              continue;
+            }
           }
 
-          const res = (await uploadImageMutation.mutateAsync(formData)) as {
-            success?: boolean;
-            storageProvider?: string;
-            url?: string;
-            data?: { storageProvider?: string };
-          };
-          successCount++;
-          const isR2 =
-            res?.storageProvider === "r2" ||
-            res?.data?.storageProvider === "r2" ||
-            (typeof res?.url === "string" && !res.url.startsWith("/uploads/"));
-          if (isR2) {
-            r2ConfirmedCount++;
+          if (res?.success) {
+            successCount++;
+            const isR2 =
+              res?.storageProvider === "r2" ||
+              res?.data?.storageProvider === "r2" ||
+              (typeof res?.url === "string" && !res.url.startsWith("/uploads/"));
+            if (isR2) {
+              r2ConfirmedCount++;
+            }
           }
         } catch (err: unknown) {
           failedCount++;
@@ -1082,6 +1126,105 @@ function AdminImagesPage() {
                 </Button>
               </DialogFooter>
             </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* Duplicate Image Warning Dialog (Admin Decision) */}
+        <Dialog
+          open={!!duplicatePrompt}
+          onOpenChange={(open) => {
+            if (!open && duplicatePrompt) {
+              duplicatePrompt.resolve("skip");
+              setDuplicatePrompt(null);
+            }
+          }}
+        >
+          <DialogContent className="max-w-md sm:max-w-xl rounded-3xl p-6 shadow-card">
+            <DialogHeader>
+              <DialogTitle className="font-display text-base sm:text-lg font-bold flex items-center gap-2 text-amber-600 dark:text-amber-500">
+                <AlertTriangle className="h-5 w-5 shrink-0" /> ប្រទះឃើញរូបភាពស្ទួន (Duplicate Image Detected)
+              </DialogTitle>
+            </DialogHeader>
+
+            {duplicatePrompt && (
+              <div className="mt-3 space-y-4 text-xs">
+                <p className="text-muted-foreground leading-relaxed">
+                  រូបភាព <strong className="text-foreground">«{duplicatePrompt.item.file.name}»</strong> មានទិន្នន័យ (SHA-256) ដូចគ្នាបេះបិទនឹងរូបភាពដែលមានស្រាប់ក្នុងបណ្ណសារ។ តើលោកអ្នកចង់បោះបង់ ឬរក្សាទុកទាំងពីរ?
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  {/* New Upload File Card */}
+                  <div className="rounded-2xl border border-border/70 bg-secondary/30 p-3 space-y-2">
+                    <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                      រូបភាពថ្មីកំពុងបង្ហោះ
+                    </span>
+                    <div className="relative aspect-video w-full rounded-xl overflow-hidden bg-black/5 border border-border/40">
+                      <img
+                        src={duplicatePrompt.item.previewUrl}
+                        alt={duplicatePrompt.item.file.name}
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                    <div className="space-y-0.5 text-[11px]">
+                      <p className="font-medium truncate" title={duplicatePrompt.item.file.name}>
+                        {duplicatePrompt.item.file.name}
+                      </p>
+                      <p className="text-muted-foreground font-mono text-[10px]">
+                        {(duplicatePrompt.item.file.size / 1024).toFixed(1)} KB
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Existing File Card in Archive */}
+                  <div className="rounded-2xl border border-border/70 bg-secondary/30 p-3 space-y-2">
+                    <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold bg-primary/10 text-primary">
+                      រូបភាពដែលមានស្រាប់ក្នុងបណ្ណសារ
+                    </span>
+                    <div className="relative aspect-video w-full rounded-xl overflow-hidden bg-black/5 border border-border/40">
+                      <img
+                        src={resolveImageUrl(
+                          duplicatePrompt.existingImage.thumbnailUrl || duplicatePrompt.existingImage.url,
+                        )}
+                        alt={duplicatePrompt.existingImage.title}
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                    <div className="space-y-0.5 text-[11px]">
+                      <p className="font-medium truncate" title={duplicatePrompt.existingImage.title}>
+                        {duplicatePrompt.existingImage.title}
+                      </p>
+                      <p className="text-muted-foreground text-[10px] truncate">
+                        Album: <strong className="text-foreground">{duplicatePrompt.existingImage.albumTitle || duplicatePrompt.existingImage.albumId}</strong>
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <DialogFooter className="mt-6 flex flex-col sm:flex-row gap-2 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      duplicatePrompt.resolve("skip");
+                      setDuplicatePrompt(null);
+                    }}
+                    className="rounded-full text-xs sm:flex-1"
+                  >
+                    បោះបង់ Upload (មិនផ្ទុកឡើង)
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      duplicatePrompt.resolve("proceed");
+                      setDuplicatePrompt(null);
+                    }}
+                    className="rounded-full text-xs sm:flex-1 bg-gold text-primary-foreground hover:bg-gold/90 font-medium"
+                  >
+                    រក្សាទុកទាំងពីរ (បន្តបង្ហោះ)
+                  </Button>
+                </DialogFooter>
+              </div>
+            )}
           </DialogContent>
         </Dialog>
 

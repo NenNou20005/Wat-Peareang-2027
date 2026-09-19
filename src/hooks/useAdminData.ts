@@ -684,19 +684,42 @@ export function useDeleteAlbum() {
 /**
  * 4. IMAGE MUTATIONS
  */
+export interface UploadImageResult {
+  success?: boolean;
+  duplicateDetected?: boolean;
+  sha256?: string;
+  existingImage?: {
+    id: string;
+    albumId: string;
+    title: string;
+    url: string;
+    thumbnailUrl?: string | null;
+    createdAt?: string;
+    albumTitle?: string;
+  };
+  message?: string;
+  storageProvider?: string;
+  url?: string;
+  data?: any;
+  error?: string;
+}
+
 export function useUploadImage() {
   const queryClient = useQueryClient();
-  return useMutation({
+  return useMutation<UploadImageResult, Error, FormData>({
     mutationFn: async (formData: FormData) => {
       const res = await fetch("/api/admin/images/upload", {
         method: "POST",
         body: formData,
       });
       const json = await res.json();
-      if (!res.ok || !json.success) throw new Error(json.error || "Failed to upload image");
+      if (!res.ok || (!json.success && !json.duplicateDetected)) {
+        throw new Error(json.error || "Failed to upload image");
+      }
       return json;
     },
-    onSuccess: async (_, formData) => {
+    onSuccess: async (data, formData) => {
+      if (!data?.success) return;
       const albumId = formData.get("albumId") as string | null;
       const invalidations = [
         queryClient.invalidateQueries({ queryKey: ["admin", "images"] }),
