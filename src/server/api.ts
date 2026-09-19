@@ -2203,6 +2203,84 @@ ${allUrls
       }
     }
 
+    // POST /api/admin/images/scan-metadata (Read-Only Candidate Preview for Phase 2)
+    if (pathname === "/api/admin/images/scan-metadata" && method === "POST") {
+      const auth = await requireAuth(request, "edit_images");
+      if (auth instanceof Response) return auth;
+
+      const drizzle = getDrizzleDb();
+      if (!drizzle) return json({ success: false, error: "Database unavailable" }, 503);
+
+      try {
+        let body: { albumId?: string; limit?: number } = {};
+        try {
+          body = (await request.json()) || {};
+        } catch {
+          body = {};
+        }
+
+        const candidateConditions = [
+          isNull(schema.images.sha256),
+          isNull(schema.images.deletedAt),
+          sql`${schema.images.status} NOT IN ('trashed', 'trash')`,
+          sql`${schema.images.url} NOT LIKE '/assets/%'`,
+          sql`${schema.images.url} NOT LIKE '%/thumbs/%'`,
+          sql`${schema.images.url} NOT LIKE '%-thumb.%'`,
+          sql`${schema.images.mimeType} LIKE 'image/%'`,
+        ];
+
+        if (typeof body.albumId === "string" && body.albumId.trim() !== "" && body.albumId.trim() !== "all") {
+          candidateConditions.push(eq(schema.images.albumId, body.albumId.trim()));
+        }
+
+        const whereClause = and(...candidateConditions);
+
+        // 1. Total eligible candidates count (Read-Only)
+        const [countRes] = await drizzle
+          .select({ count: sql<number>`count(*)::int` })
+          .from(schema.images)
+          .where(whereClause);
+        const totalEligible = Number(countRes?.count ?? 0);
+
+        // 2. Select up to 10 candidates (Read-Only)
+        const safeLimit = Math.min(10, Math.max(1, Number(body.limit) || 10));
+
+        const rawCandidates = await drizzle
+          .select({
+            id: schema.images.id,
+            albumId: schema.images.albumId,
+            url: schema.images.url,
+          })
+          .from(schema.images)
+          .where(whereClause)
+          .orderBy(schema.images.createdAt)
+          .limit(safeLimit);
+
+        const r2 = new R2StorageProvider();
+        const candidates = rawCandidates.map((img) => {
+          const resolvedKey = r2.extractKeyFromUrl(img.url);
+          return {
+            id: img.id,
+            albumId: img.albumId,
+            url: img.url,
+            key: resolvedKey,
+            resolvedKey,
+          };
+        });
+
+        return json({
+          success: true,
+          totalEligible,
+          candidateCount: candidates.length,
+          candidates,
+        });
+      } catch (err) {
+        logger.error("Error in scan-metadata candidate preview endpoint", { error: err });
+        const errMsg = err instanceof Error ? err.message : "Failed to preview metadata candidates";
+        return json({ success: false, error: errMsg }, 500);
+      }
+    }
+
     // POST /api/admin/images (Upload Image Metadata - JSON support with strict URL validation)
     if (pathname === "/api/admin/images" && method === "POST") {
       const auth = await requireAuth(request, "upload_images");

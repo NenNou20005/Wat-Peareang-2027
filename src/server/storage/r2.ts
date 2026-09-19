@@ -483,7 +483,7 @@ export class R2StorageProvider implements StorageProvider {
     return `/api/storage/r2/${cleanKey}`;
   }
 
-  private extractKeyFromUrl(urlOrKey: string): string {
+  public extractKeyFromUrl(urlOrKey: string): string {
     if (!urlOrKey) return "";
     // Protect static template assets from accidental R2 deletion
     if (urlOrKey.startsWith("/assets/") || urlOrKey.startsWith("assets/")) {

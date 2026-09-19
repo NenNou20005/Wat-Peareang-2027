@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "db:migrate": "node --import tsx src/db/run-migration.ts",
+    "db:scan-images": "node --import tsx scripts/scan-existing-images.ts",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"
   },
