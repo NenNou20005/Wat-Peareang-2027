@@ -2203,7 +2203,7 @@ ${allUrls
       }
     }
 
-    // POST /api/admin/images/scan-metadata (Read-Only Candidate Preview for Phase 2)
+    // POST /api/admin/images/scan-metadata (Controlled Candidate Preview & Execution for Phase 2)
     if (pathname === "/api/admin/images/scan-metadata" && method === "POST") {
       const auth = await requireAuth(request, "edit_images");
       if (auth instanceof Response) return auth;
@@ -2212,12 +2212,14 @@ ${allUrls
       if (!drizzle) return json({ success: false, error: "Database unavailable" }, 503);
 
       try {
-        let body: { albumId?: string; limit?: number } = {};
+        let body: { albumId?: string; limit?: number; execute?: boolean } = {};
         try {
           body = (await request.json()) || {};
         } catch {
           body = {};
         }
+
+        const isExecute = body.execute === true;
 
         const candidateConditions = [
           isNull(schema.images.sha256),
@@ -2235,15 +2237,51 @@ ${allUrls
 
         const whereClause = and(...candidateConditions);
 
-        // 1. Total eligible candidates count (Read-Only)
+        // 1. Total eligible candidates count
         const [countRes] = await drizzle
           .select({ count: sql<number>`count(*)::int` })
           .from(schema.images)
           .where(whereClause);
         const totalEligible = Number(countRes?.count ?? 0);
 
-        // 2. Select up to 10 candidates (Read-Only)
-        const safeLimit = Math.min(10, Math.max(1, Number(body.limit) || 10));
+        const r2 = new R2StorageProvider();
+
+        // 2. Read-Only Preview Mode (Default when execute !== true)
+        if (!isExecute) {
+          const previewLimit = Math.min(10, Math.max(1, Number(body.limit) || 10));
+          const rawCandidates = await drizzle
+            .select({
+              id: schema.images.id,
+              albumId: schema.images.albumId,
+              url: schema.images.url,
+            })
+            .from(schema.images)
+            .where(whereClause)
+            .orderBy(schema.images.createdAt)
+            .limit(previewLimit);
+
+          const candidates = rawCandidates.map((img) => {
+            const resolvedKey = r2.extractKeyFromUrl(img.url);
+            return {
+              id: img.id,
+              albumId: img.albumId,
+              url: img.url,
+              key: resolvedKey,
+              resolvedKey,
+            };
+          });
+
+          return json({
+            success: true,
+            totalEligible,
+            candidateCount: candidates.length,
+            candidates,
+          });
+        }
+
+        // 3. Controlled Production Execution Mode (when execute === true)
+        // Hard batch limit: Maximum 5 images per request
+        const execLimit = Math.min(5, Math.max(1, Number(body.limit) || 5));
 
         const rawCandidates = await drizzle
           .select({
@@ -2254,29 +2292,144 @@ ${allUrls
           .from(schema.images)
           .where(whereClause)
           .orderBy(schema.images.createdAt)
-          .limit(safeLimit);
+          .limit(execLimit);
 
-        const r2 = new R2StorageProvider();
-        const candidates = rawCandidates.map((img) => {
-          const resolvedKey = r2.extractKeyFromUrl(img.url);
-          return {
-            id: img.id,
-            albumId: img.albumId,
-            url: img.url,
-            key: resolvedKey,
-            resolvedKey,
-          };
-        });
+        let processed = 0;
+        let updated = 0;
+        let failed = 0;
+        const results: Array<{
+          id: string;
+          albumId: string;
+          url: string;
+          key: string;
+          status: "updated" | "failed" | "skipped";
+          sha256?: string;
+          width?: number | null;
+          height?: number | null;
+          error?: string;
+        }> = [];
+
+        // In-memory key cache for metadata deduplication (never caches raw buffers)
+        const keyMetadataCache = new Map<string, { sha256: string; width: number | null; height: number | null }>();
+
+        for (let i = 0; i < rawCandidates.length; i++) {
+          const cand = rawCandidates[i]!;
+          processed++;
+
+          const key = r2.extractKeyFromUrl(cand.url);
+          if (!key) {
+            failed++;
+            results.push({
+              id: cand.id,
+              albumId: cand.albumId,
+              url: cand.url,
+              key: "",
+              status: "skipped",
+              error: "Could not resolve valid R2 object key from URL",
+            });
+            continue;
+          }
+
+          try {
+            let meta: { sha256: string; width: number | null; height: number | null } | null = null;
+
+            if (keyMetadataCache.has(key)) {
+              meta = keyMetadataCache.get(key)!;
+            } else {
+              const obj = await r2.getObject(key);
+              if (!obj || !obj.body || obj.body.length === 0) {
+                failed++;
+                results.push({
+                  id: cand.id,
+                  albumId: cand.albumId,
+                  url: cand.url,
+                  key,
+                  status: "failed",
+                  error: "R2 object not found or empty",
+                });
+                continue;
+              }
+
+              // Single-item buffer (released at end of loop iteration for memory safety)
+              const buffer = Buffer.from(obj.body);
+
+              // SHA-256 hash calculation
+              const sha256 = crypto.createHash("sha256").update(buffer).digest("hex").toLowerCase();
+
+              // Dimensions extraction via Sharp
+              let width: number | null = null;
+              let height: number | null = null;
+              try {
+                const sharpMeta = await sharp(buffer).metadata();
+                if (typeof sharpMeta.width === "number" && sharpMeta.width > 0) {
+                  width = sharpMeta.width;
+                }
+                if (typeof sharpMeta.height === "number" && sharpMeta.height > 0) {
+                  height = sharpMeta.height;
+                }
+              } catch {
+                // Keep valid SHA-256 even if dimensions cannot be read
+              }
+
+              meta = { sha256, width, height };
+              keyMetadataCache.set(key, meta);
+            }
+
+            // Update ONLY sha256, width, height, updatedAt on PostgreSQL row
+            await drizzle
+              .update(schema.images)
+              .set({
+                sha256: meta.sha256,
+                width: meta.width,
+                height: meta.height,
+                updatedAt: new Date(),
+              })
+              .where(eq(schema.images.id, cand.id));
+
+            updated++;
+            results.push({
+              id: cand.id,
+              albumId: cand.albumId,
+              url: cand.url,
+              key,
+              status: "updated",
+              sha256: meta.sha256,
+              width: meta.width,
+              height: meta.height,
+            });
+
+            // Inter-item throttle delay (150ms) to protect CPU/memory on Render Free
+            if (i < rawCandidates.length - 1) {
+              await new Promise((resolve) => setTimeout(resolve, 150));
+            }
+          } catch (itemErr) {
+            failed++;
+            const errMsg = itemErr instanceof Error ? itemErr.message : "Error processing image";
+            results.push({
+              id: cand.id,
+              albumId: cand.albumId,
+              url: cand.url,
+              key,
+              status: "failed",
+              error: errMsg,
+            });
+          }
+        }
+
+        const remaining = Math.max(0, totalEligible - updated);
 
         return json({
           success: true,
           totalEligible,
-          candidateCount: candidates.length,
-          candidates,
+          processed,
+          updated,
+          failed,
+          remaining,
+          results,
         });
       } catch (err) {
-        logger.error("Error in scan-metadata candidate preview endpoint", { error: err });
-        const errMsg = err instanceof Error ? err.message : "Failed to preview metadata candidates";
+        logger.error("Error in scan-metadata endpoint", { error: err });
+        const errMsg = err instanceof Error ? err.message : "Failed to process metadata scan";
         return json({ success: false, error: errMsg }, 500);
       }
     }
