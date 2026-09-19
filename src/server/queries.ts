@@ -140,6 +140,67 @@ export async function getPostgresYears(): Promise<number[]> {
   }
 }
 
+const DEFAULT_FESTIVAL_SLUGS = new Set([
+  "chaul-chnam",
+  "visak-bochea",
+  "meak-bochea",
+  "chol-vossa",
+  "chenh-vossa",
+  "pchum-ben",
+  "kathin",
+  "om-touk",
+  "dar-lean",
+  "pka-samaki",
+  "chlong-preah-vihear",
+  "bombuos-neak",
+  "laeng-neakta",
+  "chrot-preah-nongkoal",
+  "puthea-pisek",
+  "pachay-buon",
+]);
+
+/**
+ * Checks whether an album's cover string is a generic/default festival placeholder cover,
+ * rather than a manual cover explicitly chosen by an admin or an actual photo.
+ */
+function isFestivalDefaultCover(
+  coverImage?: string | null,
+  festivalCover?: string | null,
+  festivalCoverUrl?: string | null,
+  festivalId?: string | null,
+): boolean {
+  if (!coverImage || !coverImage.trim()) return true;
+  const c = coverImage.trim();
+
+  // 1. Direct equality with festival's own cover or coverUrl
+  if (festivalCover && c === festivalCover.trim()) return true;
+  if (festivalCoverUrl && c === festivalCoverUrl.trim()) return true;
+
+  // 2. Matches festival ID
+  if (
+    festivalId &&
+    (c === festivalId.trim() ||
+      c === `/assets/fest-${festivalId}.jpg` ||
+      c === `fest-${festivalId}.jpg`)
+  ) {
+    return true;
+  }
+  if (DEFAULT_FESTIVAL_SLUGS.has(c)) return true;
+
+  // 3. Known local asset template patterns
+  if (
+    c.startsWith("/assets/fest") ||
+    c.startsWith("assets/fest") ||
+    c.startsWith("fest-") ||
+    c.includes("/assets/fest-") ||
+    c.includes("assets/fest-")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 /**
  * 3. Read albums from PostgreSQL with dynamic joined festival information and optional filters
  */
@@ -238,6 +299,21 @@ export async function getPostgresAlbums(filter?: {
           ? Number(row.actual_video_count)
           : 0;
 
+      const hasManualCover = !isFestivalDefaultCover(
+        row.cover_image,
+        festObj.cover,
+        row.fest_cover_url,
+        row.fest_id,
+      );
+
+      // Priority 1: Admin explicitly chosen manual cover
+      // Priority 2: Direct photo of the album
+      // Otherwise: null (pending child fallback or empty)
+      const directCover =
+        hasManualCover && row.cover_image
+          ? row.cover_image
+          : (row.first_image_url || null);
+
       return {
         id: row.id,
         festivalId: row.festival_id,
@@ -248,7 +324,7 @@ export async function getPostgresAlbums(filter?: {
         videoCount: realVideoCount,
         title: row.title,
         description: row.description,
-        coverImage: row.cover_image || row.first_image_url || festObj.cover,
+        coverImage: directCover,
         viewsCount: row.views_count,
         likesCount: row.likes_count,
         status: row.status,
@@ -257,6 +333,36 @@ export async function getPostgresAlbums(filter?: {
         parentAlbumId: row.parent_album_id || null,
       };
     });
+
+    // Priority 3 & 4: In-memory Parent Album cover resolution using already queried albums (Zero N+1)
+    const childrenByParent = new Map<string, DbAlbum[]>();
+    for (const alb of mapped) {
+      if (alb.parentAlbumId) {
+        const list = childrenByParent.get(alb.parentAlbumId) || [];
+        list.push(alb);
+        childrenByParent.set(alb.parentAlbumId, list);
+      }
+    }
+
+    for (const alb of mapped) {
+      const children = childrenByParent.get(alb.id);
+      const isParent = !alb.parentAlbumId || (children && children.length > 0);
+
+      // If Parent Album has no manual cover and no direct photos, resolve from child albums
+      if (isParent && !alb.coverImage && children && children.length > 0) {
+        const sortedChildren = [...children].sort(
+          (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
+        );
+        // Find first child album that ACTUALLY has photos
+        const childWithPhotos = sortedChildren.find(
+          (c) => (c.photoCount && c.photoCount > 0) && c.coverImage,
+        );
+        if (childWithPhotos && childWithPhotos.coverImage) {
+          alb.coverImage = childWithPhotos.coverImage;
+        }
+        // If Parent and all Child albums have NO photos, alb.coverImage remains null (Priority 4)
+      }
+    }
 
     if (filter?.search) {
       const rawQ = filter.search.toLowerCase().trim();
@@ -353,6 +459,70 @@ export async function getPostgresAlbumById(albumId: string): Promise<DbAlbum | n
         ? Number(actualVideoCount)
         : 0;
 
+    const hasManualCover = !isFestivalDefaultCover(
+      album.coverImage,
+      festObj.cover,
+      festival.coverUrl,
+      festival.id,
+    );
+
+    // Priority 1: Admin explicitly chosen manual cover
+    // Priority 2: Direct photo of the album
+    let resolvedCover: string | null =
+      hasManualCover && album.coverImage
+        ? album.coverImage
+        : (firstImageUrl || null);
+
+    // Priority 3 & 4: If Parent Album has no manual cover and no direct photos, resolve from child albums
+    if (!resolvedCover) {
+      const childRows = await db
+        .select({
+          id: schema.albums.id,
+          coverImage: schema.albums.coverImage,
+          sortOrder: schema.albums.sortOrder,
+          actualPhotoCount: sql<number>`(
+            SELECT count(*)::int FROM ${schema.images}
+            WHERE ${schema.images.albumId} = ${schema.albums.id}
+            AND ${schema.images.status} != 'trashed'
+            AND ${schema.images.deletedAt} IS NULL
+          )`,
+          firstImageUrl: sql<string | null>`(
+            SELECT COALESCE(${schema.images.thumbnailUrl}, ${schema.images.url}) FROM ${schema.images}
+            WHERE ${schema.images.albumId} = ${schema.albums.id}
+            AND ${schema.images.status} != 'trashed'
+            AND ${schema.images.deletedAt} IS NULL
+            ORDER BY ${schema.images.createdAt} ASC
+            LIMIT 1
+          )`,
+        })
+        .from(schema.albums)
+        .where(
+          and(
+            eq(schema.albums.parentAlbumId, album.id),
+            or(eq(schema.albums.status, "published"), eq(schema.albums.status, "approved")),
+          ),
+        )
+        .orderBy(asc(schema.albums.sortOrder), asc(schema.albums.createdAt), asc(schema.albums.id));
+
+      const childWithPhoto = childRows.find(
+        (c) => Number(c.actualPhotoCount || 0) > 0 && (c.firstImageUrl || c.coverImage),
+      );
+
+      if (childWithPhoto) {
+        const childHasManual = !isFestivalDefaultCover(
+          childWithPhoto.coverImage,
+          festObj.cover,
+          festival.coverUrl,
+          festival.id,
+        );
+        resolvedCover =
+          childHasManual && childWithPhoto.coverImage
+            ? childWithPhoto.coverImage
+            : (childWithPhoto.firstImageUrl || null);
+      }
+      // If Parent and all Child albums have NO photos, resolvedCover remains null (Priority 4)
+    }
+
     return {
       id: album.id,
       festivalId: album.festivalId,
@@ -363,7 +533,7 @@ export async function getPostgresAlbumById(albumId: string): Promise<DbAlbum | n
       videoCount: realVideoCount,
       title: album.title,
       description: album.description,
-      coverImage: album.coverImage || firstImageUrl || festObj.cover,
+      coverImage: resolvedCover,
       viewsCount: album.viewsCount,
       likesCount: album.likesCount,
       status: album.status,
